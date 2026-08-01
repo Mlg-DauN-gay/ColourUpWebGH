@@ -5,7 +5,7 @@ import { C, PALETTE, THEMES, themeVars } from "@/lib/themes";
 import { DICT, money } from "@/lib/i18n";
 import { Lang } from "@/lib/LangContext";
 import { simplify } from "@/lib/settle";
-import { useLocalStorageState } from "@/lib/useLocalStorageState";
+import { useAppData } from "@/lib/useAppData";
 import { Chip, Dot } from "@/components/atoms";
 import PotRail from "@/components/PotRail";
 import LedgerPanel from "@/components/LedgerPanel";
@@ -21,10 +21,6 @@ import Done from "@/components/Done";
 import FriendsTab from "@/components/FriendsTab";
 import ProfileTab from "@/components/ProfileTab";
 import JoinSheet from "@/components/JoinSheet";
-
-const LS_PROFILE = "colourup:profile";
-const LS_FRIENDS = "colourup:friends";
-const LS_HISTORY = "colourup:history";
 
 const DEFAULT_PROFILE = { registered: false, name: "You", handle: "@you", currency: "₸", color: PALETTE[3] };
 const DEFAULT_FRIENDS = [
@@ -52,10 +48,12 @@ export default function ColourUpPage() {
 
   const [tab, setTab] = useState("play");
 
-  // profile + social — persisted to localStorage, SSR-safe via useSyncExternalStore
-  const [profile, setProfile] = useLocalStorageState(LS_PROFILE, DEFAULT_PROFILE);
-  const [friends, setFriends] = useLocalStorageState(LS_FRIENDS, DEFAULT_FRIENDS);
-  const [history, setHistory] = useLocalStorageState(LS_HISTORY, DEFAULT_HISTORY);
+  // profile + social — solo mode persists to localStorage; online mode syncs
+  // to Supabase and works across devices (see lib/useAppData.js)
+  const {
+    mode, goOnline, goSolo, session, isAnonymous, userEmail, linkEmail, signInWithEmail, signOut,
+    profile, setProfile, friends, setFriends, history, setHistory,
+  } = useAppData({ profile: DEFAULT_PROFILE, friends: DEFAULT_FRIENDS, history: DEFAULT_HISTORY });
 
   // game engine
   const [gp, setGp] = useState("home"); // home | setup | lobby | fund | live | cashout | reconcile | settle | done
@@ -194,7 +192,10 @@ export default function ColourUpPage() {
               {gp === "done" && <Done {...{ cfg, nets, transfers, elapsed, backHome, players }} />}
             </>)}
             {tab === "friends" && <FriendsTab {...{ friends, setFriends, mkLog, gameLive, addSeatNamed }} />}
-            {tab === "profile" && <ProfileTab {...{ profile, setProfile, history, themeKey, setThemeKey, lang, setLang }} />}
+            {tab === "profile" && <ProfileTab {...{
+              profile, setProfile, history, themeKey, setThemeKey, lang, setLang,
+              mode, goOnline, goSolo, session, isAnonymous, userEmail, linkEmail, signInWithEmail, signOut,
+            }} />}
           </div>
 
           {/* device switcher during a live game */}
