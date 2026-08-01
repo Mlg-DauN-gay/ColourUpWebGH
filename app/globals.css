@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+
+.disp {
+  font-family: var(--font-disp), system-ui, sans-serif;
+}
+
+.body {
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+
+.mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+button:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
+.spin {
+  animation: sp 1s linear infinite;
+}
+
+@keyframes sp {
+  to {
+    transform: rotate(360deg);
+  }
+}

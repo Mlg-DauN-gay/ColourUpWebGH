@@ -1,0 +1,47 @@
+"use client";
+import { AlertTriangle, Lock, RotateCcw } from "lucide-react";
+import { C } from "@/lib/themes";
+import { useL } from "@/lib/LangContext";
+import { Btn, Dot, Eyebrow, Row } from "./atoms";
+
+export default function Reconcile({ players, upd, drift, chipsOut, counted, setGp, mkLog }) {
+  const { L } = useL();
+  const ok = drift === 0;
+  const close = !ok && Math.abs(drift) <= Math.round(chipsOut * 0.005);
+  return (
+    <div className="space-y-6">
+      <div>
+        <Eyebrow tone={ok ? C.win : C.lose}>{L.stepFour}</Eyebrow>
+        <div className="disp mt-1" style={{ fontSize: 27, fontWeight: 800, letterSpacing: "-.03em" }}>{ok ? L.booksBalance : L.countOff}</div>
+        <p className="mt-2" style={{ fontSize: 13.5, color: C.mute, lineHeight: 1.5 }}>{ok ? L.reconOk(counted.toLocaleString(), chipsOut.toLocaleString()) : L.reconBad(counted.toLocaleString(), chipsOut.toLocaleString(), Math.abs(drift).toLocaleString(), drift > 0 ? L.tooMany : L.unaccounted)}</p>
+      </div>
+      {!ok && (
+        <div className="p-3.5 rounded-xl flex gap-3" style={{ background: C.lose + "1e", border: `1px solid ${C.lose}55` }}>
+          <AlertTriangle size={16} style={{ color: C.lose, flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 12.5, color: C.lose, lineHeight: 1.45, opacity: .95 }}>{close ? L.closeMsg : L.bigGap}</div>
+        </div>
+      )}
+      <div className="space-y-2">
+        {players.map(p => (
+          <Row key={p.id}>
+            <Dot p={p} /><span className="flex-1" style={{ fontSize: 14, fontWeight: 500 }}>{p.name}</span>
+            <span className="mono" style={{ fontSize: 15, fontWeight: 600, color: ok ? C.ivory : C.sub }}>{(p.chips ?? 0).toLocaleString()}</span>
+          </Row>
+        ))}
+      </div>
+      {ok ? (
+        <Btn full onClick={() => { setGp("settle"); mkLog(L.booksBalancedLog); }}>{L.drawSettle}</Btn>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-start gap-2 px-1" style={{ color: C.mute }}>
+            <Lock size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 11.5, lineHeight: 1.45 }}>{L.reconLocked}</span>
+          </div>
+          <Btn full onClick={() => { players.forEach(p => upd(p.id, { submitted: false, chips: null })); setGp("cashout"); mkLog(L.recountLog); }}>
+            <RotateCcw size={15} className="inline -mt-0.5 mr-1.5" /> {L.recountAll}
+          </Btn>
+        </div>
+      )}
+    </div>
+  );
+}
