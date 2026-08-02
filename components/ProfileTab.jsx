@@ -1,67 +1,56 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Check, Clock, Cloud, CloudOff, History, Languages, LogOut, Palette, Spade, TrendingUp, Trophy, User } from "lucide-react";
+import { AlertTriangle, Check, Clock, Cloud, History, Languages, LogOut, Palette, Spade, TrendingUp, Trophy, User } from "lucide-react";
 import { C, CURRENCIES, PALETTE, THEMES } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
 import { Btn, Dot, Eyebrow, Field } from "./atoms";
 import HistoryRow from "./HistoryRow";
 
-function AccountSection({ mode, isAnonymous, userEmail, linkEmail, signInWithEmail, signOut }) {
+function AccountSection({ userEmail, signOut, updatePassword }) {
   const { L } = useL();
-  const [email, setEmail] = useState("");
-  const [state, setState] = useState("idle"); // idle | sending | sent | error
+  const [changing, setChanging] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [state, setState] = useState("idle"); // idle | saving | done | error
+  const [error, setError] = useState("");
 
-  async function send(action) {
-    if (!email.trim()) return;
-    setState("sending");
-    const { error } = await action(email.trim());
-    setState(error ? "error" : "sent");
+  async function handleChangePassword() {
+    setState("saving"); setError("");
+    const { error } = await updatePassword(newPassword);
+    if (error) { setState("error"); setError(error.message); return; }
+    setState("done");
+    setNewPassword("");
+    setTimeout(() => { setChanging(false); setState("idle"); }, 1200);
   }
 
   return (
     <div>
       <Eyebrow>{L.account}</Eyebrow>
       <div className="mt-2 p-4 rounded-xl space-y-3" style={{ background: C.room, border: `1px solid ${C.line}` }}>
-        {mode === "online" && !isAnonymous && userEmail ? (
-          <>
-            <div className="flex items-center gap-2"><Cloud size={15} style={{ color: C.win }} /><span style={{ fontSize: 13, fontWeight: 600 }}>{L.signedInAs(userEmail)}</span></div>
-            <button onClick={signOut} className="flex items-center gap-1.5" style={{ fontSize: 12, color: C.mute }}><LogOut size={13} /> {L.signOut}</button>
-          </>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2"><Cloud size={15} style={{ color: C.win }} /><span style={{ fontSize: 13, fontWeight: 600 }}>{L.signedInAs(userEmail)}</span></div>
+          <button onClick={signOut} className="flex items-center gap-1.5" style={{ fontSize: 12, color: C.mute }}><LogOut size={13} /> {L.signOut}</button>
+        </div>
+        {changing ? (
+          <div className="flex gap-2 items-center">
+            <input type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder={L.newPasswordLabel}
+              className="flex-1 bg-transparent outline-none mono" style={{ fontSize: 13, color: C.ivory, borderBottom: `1px solid ${C.line}`, paddingBottom: 6 }} />
+            <Btn small disabled={newPassword.length < 6 || state === "saving"} onClick={handleChangePassword}>{L.setNewPasswordBtn}</Btn>
+          </div>
         ) : (
-          <>
-            <div className="flex items-start gap-2">
-              {mode === "online" ? <Cloud size={15} style={{ color: C.brass, flexShrink: 0, marginTop: 1 }} /> : <CloudOff size={15} style={{ color: C.mute, flexShrink: 0, marginTop: 1 }} />}
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{mode === "online" ? L.guestAccount : L.syncOff}</div>
-                <div style={{ fontSize: 11.5, color: C.mute, lineHeight: 1.4 }}>{mode === "online" ? L.guestAccountDesc : L.haveAccount}</div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <input type="email" value={email} onChange={e => { setEmail(e.target.value); setState("idle"); }} placeholder={L.emailPlaceholder}
-                className="flex-1 bg-transparent outline-none mono" style={{ fontSize: 13, color: C.ivory, borderBottom: `1px solid ${C.line}`, paddingBottom: 6 }} />
-              <Btn small disabled={!email.trim() || state === "sending"} onClick={() => send(mode === "online" ? linkEmail : signInWithEmail)}>
-                {mode === "online" ? L.sendLink : L.signInEmail}
-              </Btn>
-            </div>
-            {state === "sent" && <div className="mono flex items-center gap-1.5" style={{ fontSize: 11, color: C.win }}><Check size={12} /> {L.linkSent}</div>}
-            {state === "error" && <div className="mono" style={{ fontSize: 11, color: C.lose }}>{L.linkError}</div>}
-          </>
+          <button onClick={() => setChanging(true)} style={{ fontSize: 12, color: C.brass, fontWeight: 600 }}>{L.changePassword}</button>
         )}
+        {state === "done" && <div className="mono flex items-center gap-1.5" style={{ fontSize: 11, color: C.win }}><Check size={12} /> {L.passwordUpdated}</div>}
+        {state === "error" && <div className="flex items-start gap-1.5" style={{ fontSize: 11, color: C.lose, lineHeight: 1.4 }}><AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} /> {error}</div>}
       </div>
     </div>
   );
 }
 
-export default function ProfileTab({
-  profile, setProfile, history, themeKey, setThemeKey, lang, setLang,
-  mode, goOnline, goSolo, isAnonymous, userEmail, linkEmail, signInWithEmail, signOut,
-}) {
+export default function ProfileTab({ profile, setProfile, history, themeKey, setThemeKey, lang, setLang, userEmail, signOut, updatePassword }) {
   const { L, M, lang: cur } = useL();
   const [editing, setEditing] = useState(!profile.registered);
   const [draft, setDraft] = useState(profile);
-  const [wantOnline, setWantOnline] = useState(mode === "online");
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState(false);
 
   const stats = useMemo(() => {
     const games = history.length;
@@ -74,13 +63,6 @@ export default function ProfileTab({
 
   async function handleSave() {
     setSaving(true);
-    setSaveError(false);
-    if (wantOnline) {
-      const { error } = await goOnline();
-      if (error) { setSaving(false); setSaveError(true); return; }
-    } else {
-      goSolo();
-    }
     await setProfile({ ...draft, registered: true });
     setSaving(false);
     setEditing(false);
@@ -104,20 +86,6 @@ export default function ProfileTab({
           <Eyebrow>{L.homeCur}</Eyebrow>
           <div className="flex gap-2 mt-2">{CURRENCIES.map(cu => <button key={cu} onClick={() => setDraft({ ...draft, currency: cu })} className="rounded-lg mono" style={{ width: 44, height: 40, fontSize: 16, fontWeight: 600, background: draft.currency === cu ? C.brass : C.room, color: draft.currency === cu ? C.onAccent : C.ivory, border: `1px solid ${draft.currency === cu ? C.brass : C.line}` }}>{cu}</button>)}</div>
         </div>
-        <div>
-          <Eyebrow>{L.account}</Eyebrow>
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            {[[false, L.syncOff, CloudOff], [true, L.syncAcross, Cloud]].map(([val, label, Icon]) => (
-              <button key={String(val)} onClick={() => setWantOnline(val)}
-                className="flex flex-col items-center justify-center gap-1.5 rounded-xl py-3.5"
-                style={{ background: wantOnline === val ? C.brass : C.room, color: wantOnline === val ? C.onAccent : C.ivory, border: `1px solid ${wantOnline === val ? C.brass : C.line}` }}>
-                <Icon size={18} /><span style={{ fontSize: 12, fontWeight: 600, textAlign: "center" }}>{label}</span>
-              </button>
-            ))}
-          </div>
-          <div style={{ fontSize: 11.5, color: C.mute, lineHeight: 1.4, marginTop: 8 }}>{wantOnline ? L.syncOn : L.syncOffDesc}</div>
-        </div>
-        {saveError && <div className="mono" style={{ fontSize: 11, color: C.lose }}>{L.linkError}</div>}
         <Btn full disabled={!draft.name.trim() || draft.handle.length < 2 || saving} onClick={handleSave}>{L.saveProfile}</Btn>
       </div>
     );
@@ -128,7 +96,7 @@ export default function ProfileTab({
       <div className="flex items-center gap-4">
         <Dot p={profile} size={56} />
         <div className="flex-1"><div className="disp" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>{profile.name}</div><div className="mono" style={{ fontSize: 12, color: C.mute }}>{profile.handle}</div></div>
-        <button onClick={() => { setDraft(profile); setWantOnline(mode === "online"); setEditing(true); }} className="grid place-items-center rounded-full" style={{ width: 34, height: 34, background: C.room, border: `1px solid ${C.line}`, color: C.mute }}><User size={15} /></button>
+        <button onClick={() => { setDraft(profile); setEditing(true); }} className="grid place-items-center rounded-full" style={{ width: 34, height: 34, background: C.room, border: `1px solid ${C.line}`, color: C.mute }}><User size={15} /></button>
       </div>
 
       <div>
@@ -149,7 +117,7 @@ export default function ProfileTab({
           : <div className="space-y-2">{history.map(h => <HistoryRow key={h.id} h={h} />)}</div>}
       </div>
 
-      <AccountSection {...{ mode, isAnonymous, userEmail, linkEmail, signInWithEmail, signOut }} />
+      <AccountSection {...{ userEmail, signOut, updatePassword }} />
 
       <div>
         <Eyebrow>{L.appearance}</Eyebrow>
