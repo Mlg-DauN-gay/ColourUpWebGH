@@ -99,8 +99,9 @@ proxy.js                  refreshes the Supabase session cookie on every request
 - Signing in isn't required to browse or set up a table — only to open a
   lobby (`components/Setup.jsx`'s "Open lobby" routes through `openLobby()`
   in `app/page.jsx`, which sends a signed-out visitor to the profile screen
-  instead). A signed-in user with no profile row yet is walked straight
-  through profile creation there before the lobby opens.
+  instead of opening it). Finishing sign-up/log-in and profile creation
+  there automatically finishes opening the lobby (`pendingLobby` state in
+  `app/page.jsx`) — no need to go back and click "Open lobby" again.
 - One fixed palette (`lib/themes.js`) — no theme switcher.
 - The multi-phone QR join is still simulated (no realtime game backend yet);
   the lobby's QR code is real and scannable and encodes `/join/<code>`.
