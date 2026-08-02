@@ -12,7 +12,8 @@ transfers needed to square everyone up. It never charges cards, holds funds,
 or moves money. That constraint is non-negotiable and applies to every future
 milestone too.
 
-- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH (branch `main`, working tree clean as of this handoff)
+- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH — active work is on branch
+  `claude/launch-app-yb9vqz` (not yet merged to `main`), working tree clean as of this handoff
 - **Stack**: Next.js 16 (App Router, JS/JSX — not TypeScript), Tailwind CSS, lucide-react, Supabase (Postgres + Auth)
 - **Not yet deployed anywhere** — only runs locally via `npm run dev`. No hosting provider chosen yet.
 
@@ -201,6 +202,65 @@ this slice, deliberately — see "What's next" below for the follow-up.
   "table already in progress" message rather than silently misrendering
   in that case); `components/JoinSheet.jsx` (manual code-entry sheet)
   is still the old non-functional stub.
+
+### Bug found + fixed while testing this slice against the real project
+
+The migration as first written had a real bug: the `game_players` SELECT
+policy ("can you see this game's roster") queried `game_players` from
+within its own policy to check "are you already seated here" — Postgres
+treats that as infinite recursion and PostgREST surfaces it as a bare
+`500 Internal Server Error` on `GET .../game_players?...` (not a 401/403,
+which is what makes it non-obvious). **Already fixed** in
+`0002_multiplayer.sql` (added a `security definer` helper function,
+`public.is_game_member()`, and routed the policy through it instead — see
+the comment right above that policy for why). If you're setting up a
+*fresh* Supabase project from scratch, the checked-in migration file
+already has the fix, so this only bites you if you're diffing against an
+older copy. If a project already ran the broken version before this fix
+landed, the corrective SQL (create-or-replace the function, drop+recreate
+just that one policy) is in the commit that fixed this
+(`3698870`) — cheaper than re-running the whole migration.
+
+### Confirmed working, live, against the real project
+
+After the fix above, the user walked through this themselves (this
+sandbox's network policy blocks reaching `supabase.co` at all, confirmed
+directly — session-level restriction, not a code problem, so live testing
+has to happen on an actual machine, not in a Claude Code cloud session):
+sign-up → profile creation → **Open lobby** → real `games`/`game_players`
+rows created → Lobby screen loads correctly. One separate, real gotcha
+worth flagging for future sessions: **don't paste long secrets (JWTs,
+API keys) through a chat UI into a terminal and trust it landed intact** —
+this user's system silently mangled part of a pasted anon key (something
+in their environment — likely a password manager's clipboard/secret
+redaction — swapped characters mid-token with bullet characters), which
+produced a genuinely confusing browser error (`Failed to execute 'fetch':
+... non ISO-8859-1 code point`) that had nothing to do with the app code.
+Diagnosed via `python3 -c "open('.env.local','rb').read().decode('ascii')"`
+(throws with the exact byte position if there's a hidden non-ASCII
+character) — worth doing that check early if a fresh session hits a
+similarly weird fetch/header error right after credentials are pasted in.
+
+### Not yet confirmed — pick this up next
+
+The user then started the two-browser test (host + guest joining via the
+real link) and hit a second issue on the **Fund/buy-in screen** — described
+only as "it bugs out," not yet diagnosed. What's known: it happened after
+the host had successfully advanced the phase and both the host's own seat
+("a") and a guest seat ("B") were visible on the buy-in screen, each
+correctly showing "UNPAID." Whatever went wrong after that (screenshots
+suggested it may have dropped back to the Home screen unexpectedly) was
+never pinned down — the session ended before getting a browser-console
+screenshot at the actual moment of failure. **First thing to do next
+session**: get the user to reproduce it with DevTools Console open on
+both windows and grab a screenshot right at the failure, since without
+that this is just a guess. Plausible starting hypotheses given the
+architecture (not verified): something in the `handleLobbyBecameFund()`
+hand-off firing twice (once from the host's explicit `onStart` call, once
+from the guest's Realtime-watching effect) racing with a subsequent state
+update; or the guest's Fund-phase anonymous-upgrade gate interacting
+oddly with a stale `session` reference. Don't assume either without the
+console output.
 
 ## What's next
 
