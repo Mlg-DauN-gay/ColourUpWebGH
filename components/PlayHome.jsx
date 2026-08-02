@@ -5,7 +5,7 @@ import { useL } from "@/lib/LangContext";
 import { Eyebrow } from "./atoms";
 import HistoryRow from "./HistoryRow";
 
-export default function PlayHome({ profile, history, gameLive, startHost, setJoinSheet, setGp, setTab }) {
+export default function PlayHome({ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab }) {
   const { L } = useL();
   const recent = history.slice(0, 3);
   return (
@@ -15,8 +15,8 @@ export default function PlayHome({ profile, history, gameLive, startHost, setJoi
         <p className="mt-2" style={{ fontSize: 13.5, color: C.mute, lineHeight: 1.5 }}>{L.homeSub}</p>
       </div>
 
-      {gameLive && (
-        <button onClick={() => setGp("lobby")} className="w-full text-left p-4 rounded-2xl flex items-center gap-3" style={{ background: C.brassSoft, border: `1px solid ${C.brass}` }}>
+      {resumeGp && (
+        <button onClick={resumeTable} className="w-full text-left p-4 rounded-2xl flex items-center gap-3" style={{ background: C.brassSoft, border: `1px solid ${C.brass}` }}>
           <span className="grid place-items-center rounded-full" style={{ width: 38, height: 38, background: C.brass, color: C.onAccent }}><Spade size={18} /></span>
           <div className="flex-1"><div style={{ fontSize: 14.5, fontWeight: 700 }}>{L.resume}</div><div className="mono" style={{ fontSize: 11, color: C.mute }}>{L.resumeSub(profile.name)}</div></div>
           <ChevronRight size={18} style={{ color: C.brass }} />

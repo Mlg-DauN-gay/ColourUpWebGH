@@ -42,6 +42,7 @@ export default function ColourUpPage() {
 
   // game engine
   const [gp, setGp] = useState("home"); // home | setup | lobby | fund | live | cashout | reconcile | settle | done
+  const [resumeGp, setResumeGp] = useState(null); // phase to jump back to from the "Resume table" banner
   const [cfg, setCfg] = useState({ title: DICT.en.thu, cur: profile.currency, buyIn: 5000, chips: 5000, scan: null, maxRebuys: 3 });
   const [players, setPlayers] = useState([]);
   const [me, setMe] = useState("p0");
@@ -91,8 +92,18 @@ export default function ColourUpPage() {
     const host = mk(profile.name, 0, true, profile.color); host.id = "p0";
     setPlayers([host]);
     setMe("p0"); setCfg(c => ({ ...c, cur: profile.currency, scan: null, chips: c.buyIn })); setLog([]); setStarted(null); setElapsed(0);
-    setLobbyCode(genCode()); setGp("setup"); setTab("play");
+    setLobbyCode(genCode()); setGp("setup"); setResumeGp(null); setTab("play");
   }
+
+  // The header logo — standard "tap the logo to go home" — but a live game
+  // isn't abandoned: its phase is remembered so the home screen's "Resume
+  // table" banner can jump straight back to it.
+  function goHome() {
+    if (gp !== "home") setResumeGp(gp);
+    setGp("home");
+    setTab("play");
+  }
+  function resumeTable() { if (resumeGp) setGp(resumeGp); }
 
   // The stake/chip setup can be explored freely, but opening the lobby is
   // where a real identity starts to matter (other players will see it, and
@@ -131,7 +142,7 @@ export default function ColourUpPage() {
     mkLog(L.settledReceiptLog(L.transferN(transfers.length)));
     mkLog(L.savedLog);
   }
-  function backHome() { setGp("home"); setPlayers([]); setStarted(null); setElapsed(0); setLog([]); }
+  function backHome() { setGp("home"); setResumeGp(null); setPlayers([]); setStarted(null); setElapsed(0); setLog([]); }
 
   const ctx = { L, lang, M };
 
@@ -153,10 +164,10 @@ export default function ColourUpPage() {
         <div className="mx-auto body" style={{ maxWidth: 460, paddingBottom: showDeviceSwitcher ? 90 : 24 }}>
           {/* header */}
           <div className="flex items-center justify-between px-5 pt-6 pb-4">
-            <div className="flex items-center gap-2">
+            <button onClick={goHome} className="flex items-center gap-2" aria-label="Home">
               <Chip size={20} color={C.gold} />
               <span className="disp" style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-.02em" }}>{L.brand}</span>
-            </div>
+            </button>
             <div className="flex items-center gap-2.5">
               {started && gameLive && <span className="mono flex items-center gap-1" style={{ fontSize: 11, color: C.mute }}><Clock size={11} /> {hhmm}</span>}
               <button onClick={() => setShowLog(s => !s)} style={{ color: showLog ? C.brass : C.mute }} aria-label="Ledger"><ScrollText size={16} /></button>
@@ -181,7 +192,7 @@ export default function ColourUpPage() {
 
           <div className="px-5">
             {tab === "play" ? (<>
-              {gp === "home" && <PlayHome {...{ profile, history, gameLive, startHost, setJoinSheet, setGp, setTab }} />}
+              {gp === "home" && <PlayHome {...{ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab }} />}
               {gp === "setup" && <Setup {...{ cfg, setCfg, players, openLobby, mkLog }} />}
               {gp === "lobby" && <Lobby {...{ cfg, players, viewer, upd, allAgreed, setGp, mkLog, lobbyCode, simulateJoin }} />}
               {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, setGp, setStarted, mkLog }} />}
