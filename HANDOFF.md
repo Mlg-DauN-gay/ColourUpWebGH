@@ -12,8 +12,14 @@ transfers needed to square everyone up. It never charges cards, holds funds,
 or moves money. That constraint is non-negotiable and applies to every future
 milestone too.
 
-- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH — active work is on branch
-  `claude/launch-app-yb9vqz` (not yet merged to `main`), working tree clean as of this handoff
+- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH — **working copy is
+  `~/ColourUpWebGH`, on branch `claude/launch-app-yb9vqz`** (not yet merged/
+  PR'd into `main`; `main` is still M1-only). A second, older, now-orphaned
+  clone exists at `~/Desktop/ColourUp website` (still on `main`, missing M2)
+  — that directory caused real confusion in one session (dev server was
+  running from `~/ColourUpWebGH`, edits were made in the Desktop copy,
+  nothing matched until this was noticed). **Don't use the Desktop copy** —
+  either delete it or treat `~/ColourUpWebGH` as the only real one.
 - **Stack**: Next.js 16 (App Router, JS/JSX — not TypeScript), Tailwind CSS, lucide-react, Supabase (Postgres + Auth)
 - **Not yet deployed anywhere** — only runs locally via `npm run dev`. No hosting provider chosen yet.
 
@@ -203,64 +209,89 @@ this slice, deliberately — see "What's next" below for the follow-up.
   in that case); `components/JoinSheet.jsx` (manual code-entry sheet)
   is still the old non-functional stub.
 
-### Bug found + fixed while testing this slice against the real project
+### Bugs found + fixed getting this slice working against the real project
 
-The migration as first written had a real bug: the `game_players` SELECT
-policy ("can you see this game's roster") queried `game_players` from
-within its own policy to check "are you already seated here" — Postgres
-treats that as infinite recursion and PostgREST surfaces it as a bare
-`500 Internal Server Error` on `GET .../game_players?...` (not a 401/403,
-which is what makes it non-obvious). **Already fixed** in
-`0002_multiplayer.sql` (added a `security definer` helper function,
-`public.is_game_member()`, and routed the policy through it instead — see
-the comment right above that policy for why). If you're setting up a
-*fresh* Supabase project from scratch, the checked-in migration file
-already has the fix, so this only bites you if you're diffing against an
-older copy. If a project already ran the broken version before this fix
-landed, the corrective SQL (create-or-replace the function, drop+recreate
-just that one policy) is in the commit that fixed this
-(`3698870`) — cheaper than re-running the whole migration.
+Two different sessions independently hit and fixed overlapping problems
+here — recorded together since the full picture only makes sense combined:
 
-### Confirmed working, live, against the real project
+1. **`game_players`'s roster SELECT policy caused infinite recursion**
+   (Postgres `42P17`, surfaced by PostgREST as a bare `500`). It checked
+   "are you already seated here" by querying `game_players` from within
+   `game_players`'s own policy — Postgres refuses that outright regardless
+   of whether it would actually terminate. Two equivalent fixes exist in
+   history for this: an in-place edit to `0002_multiplayer.sql` (commit
+   `3698870`, helper function `public.is_game_member()`) and a separate
+   migration, `supabase/migrations/0004_fix_game_players_recursion.sql`
+   (helper function `public.is_seated_in_game()`). Both route the
+   self-check through a `SECURITY DEFINER` function instead of a direct
+   correlated subquery on the same table — **that's the pattern to reuse
+   for any future policy needing "does the caller already have a row in
+   this same table" logic.** Only one needs to actually be live in the
+   database at a time; whichever was run last in the SQL editor wins, and
+   this was re-verified working after `0004` was applied.
+2. **Separately, `game_players`'s INSERT policy never actually took effect
+   live** — a real host could write their own seat, but the identical
+   insert as an anonymous guest (the actual join-a-table path) came back
+   `42501 new row violates row-level security policy`. Schema/indexes/
+   function/realtime from 0002 were all fine (those statements are
+   idempotent); only the non-idempotent `create policy` statements were
+   affected, most likely a partial/aborted SQL-editor run. Fixed by
+   `supabase/migrations/0003_reapply_m2_policies.sql`, which re-applies
+   every policy from 0002 with `drop policy if exists` guards — safe to
+   re-run any time this class of bug is suspected again.
 
-After the fix above, the user walked through this themselves (this
-sandbox's network policy blocks reaching `supabase.co` at all, confirmed
-directly — session-level restriction, not a code problem, so live testing
-has to happen on an actual machine, not in a Claude Code cloud session):
-sign-up → profile creation → **Open lobby** → real `games`/`game_players`
-rows created → Lobby screen loads correctly. One separate, real gotcha
-worth flagging for future sessions: **don't paste long secrets (JWTs,
-API keys) through a chat UI into a terminal and trust it landed intact** —
-this user's system silently mangled part of a pasted anon key (something
-in their environment — likely a password manager's clipboard/secret
-redaction — swapped characters mid-token with bullet characters), which
-produced a genuinely confusing browser error (`Failed to execute 'fetch':
-... non ISO-8859-1 code point`) that had nothing to do with the app code.
-Diagnosed via `python3 -c "open('.env.local','rb').read().decode('ascii')"`
-(throws with the exact byte position if there's a hidden non-ASCII
-character) — worth doing that check early if a fresh session hits a
-similarly weird fetch/header error right after credentials are pasted in.
+**Confirmed working end-to-end**, verified two different ways: (a) a real
+user walking through sign-up → profile → Open lobby → real `games`/
+`game_players` rows → Lobby screen loading correctly; (b) directly against
+the live Supabase REST API with a fresh anonymous-sign-in token per
+simulated guest (look up game by code → insert a seat → read the roster
+back), then confirmed those inserted seats appeared live in a real
+browser's lobby via Realtime with no refresh. Note for future sessions:
+**a single browser's tabs all share one cookie jar/session**, so they
+can't simulate two independent guests — either use two real
+browsers/devices, or fake independent guests via curl + a fresh
+`POST {SUPABASE_URL}/auth/v1/signup` with an empty body per guest (gets
+back a real anonymous JWT you can use directly against `/rest/v1/...`).
+
+One unrelated real gotcha hit along the way: **don't paste long secrets
+(JWTs, API keys) through a chat UI into a terminal and trust it landed
+intact** — one user's system silently mangled part of a pasted anon key
+(likely a password manager's clipboard/secret redaction swapping
+characters mid-token), producing a confusing browser error (`Failed to
+execute 'fetch': ... non ISO-8859-1 code point`) that had nothing to do
+with the app code. Diagnosed via
+`python3 -c "open('.env.local','rb').read().decode('ascii')"` (throws with
+the exact byte position if there's a hidden non-ASCII character) — worth
+doing that check early if a fresh session hits a similarly weird
+fetch/header error right after credentials are pasted in.
+
+Also fixed in passing (unrelated to the RLS bugs, found while
+investigating): `setProfile` in `lib/useAppData.js` silently swallowed
+Supabase errors — if a profile save failed for any reason, the user was
+bounced back to the profile display with zero feedback, looking exactly
+like an unexplained "stuck" bug. It now returns `{ error }`, and
+`ProfileTab.jsx` shows it.
 
 ### Not yet confirmed — pick this up next
 
-The user then started the two-browser test (host + guest joining via the
-real link) and hit a second issue on the **Fund/buy-in screen** — described
-only as "it bugs out," not yet diagnosed. What's known: it happened after
-the host had successfully advanced the phase and both the host's own seat
+A two-browser test (host + guest joining via the real link) hit an issue
+on the **Fund/buy-in screen** — described only as "it bugs out," not yet
+diagnosed, and not re-attempted since (the RLS work above was the
+blocker being chased at the time). What's known: it happened after the
+host had successfully advanced the phase and both the host's own seat
 ("a") and a guest seat ("B") were visible on the buy-in screen, each
 correctly showing "UNPAID." Whatever went wrong after that (screenshots
 suggested it may have dropped back to the Home screen unexpectedly) was
-never pinned down — the session ended before getting a browser-console
-screenshot at the actual moment of failure. **First thing to do next
-session**: get the user to reproduce it with DevTools Console open on
-both windows and grab a screenshot right at the failure, since without
-that this is just a guess. Plausible starting hypotheses given the
-architecture (not verified): something in the `handleLobbyBecameFund()`
-hand-off firing twice (once from the host's explicit `onStart` call, once
-from the guest's Realtime-watching effect) racing with a subsequent state
-update; or the guest's Fund-phase anonymous-upgrade gate interacting
-oddly with a stale `session` reference. Don't assume either without the
-console output.
+never pinned down — no browser-console screenshot exists at the actual
+moment of failure. **First thing to do next session**: reproduce it with
+DevTools Console open on both windows and grab a screenshot right at the
+failure, since without that this is just a guess. Plausible starting
+hypotheses given the architecture (not verified): something in
+`handleLobbyBecameFund()` firing twice (once from the host's explicit
+`onStart` call, once from the guest's Realtime-watching effect) racing
+with a subsequent state update; or the guest's Fund-phase
+anonymous-upgrade gate interacting oddly with a stale `session`
+reference. Don't assume either without the console output.
 
 ## What's next
 
