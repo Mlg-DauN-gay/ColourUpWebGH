@@ -1,10 +1,20 @@
 "use client";
 import { useMemo, useState } from "react";
-import { AlertTriangle, Check, Clock, Cloud, History, Languages, LogOut, Palette, Spade, TrendingUp, Trophy, User } from "lucide-react";
-import { C, CURRENCIES, PALETTE, THEMES } from "@/lib/themes";
+import { AlertTriangle, Check, ChevronLeft, Clock, Cloud, History, LogOut, Spade, TrendingUp, Trophy, User } from "lucide-react";
+import { C, CURRENCIES, PALETTE } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
-import { Btn, Dot, Eyebrow, Field } from "./atoms";
+import { Btn, Chip, Dot, Eyebrow, Field } from "./atoms";
 import HistoryRow from "./HistoryRow";
+import FriendsTab from "./FriendsTab";
+import AuthGate from "./AuthGate";
+
+function BackBar({ onBack }) {
+  return (
+    <button onClick={onBack} className="grid place-items-center rounded-full mb-2" style={{ width: 30, height: 30, background: C.room, border: `1px solid ${C.line}`, color: C.mute }} aria-label="Back">
+      <ChevronLeft size={16} />
+    </button>
+  );
+}
 
 function AccountSection({ userEmail, signOut, updatePassword }) {
   const { L } = useL();
@@ -46,9 +56,14 @@ function AccountSection({ userEmail, signOut, updatePassword }) {
   );
 }
 
-export default function ProfileTab({ profile, setProfile, history, themeKey, setThemeKey, lang, setLang, userEmail, signOut, updatePassword }) {
-  const { L, M, lang: cur } = useL();
-  const [editing, setEditing] = useState(!profile.registered);
+export default function ProfileTab({
+  session, dataReady, signUp, signIn, requestPasswordReset,
+  profile, setProfile, history, userEmail, signOut, updatePassword,
+  friends, setFriends, mkLog, gameLive, addSeatNamed,
+  onBack,
+}) {
+  const { L, M } = useL();
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(profile);
   const [saving, setSaving] = useState(false);
 
@@ -68,9 +83,28 @@ export default function ProfileTab({ profile, setProfile, history, themeKey, set
     setEditing(false);
   }
 
-  if (editing) {
+  if (!session) {
     return (
       <div className="space-y-6">
+        <BackBar onBack={onBack} />
+        <AuthGate {...{ signUp, signIn, requestPasswordReset }} />
+      </div>
+    );
+  }
+
+  if (!dataReady) {
+    return (
+      <div className="space-y-6">
+        <BackBar onBack={onBack} />
+        <div className="flex justify-center py-10"><Chip size={32} color={C.gold} /></div>
+      </div>
+    );
+  }
+
+  if (!profile.registered || editing) {
+    return (
+      <div className="space-y-6">
+        <BackBar onBack={onBack} />
         <div><div className="disp" style={{ fontSize: 27, fontWeight: 800, letterSpacing: "-.03em" }}>{profile.registered ? L.editProfile : L.createProfile}</div>
           <p className="mt-2" style={{ fontSize: 13.5, color: C.mute, lineHeight: 1.5 }}>{L.regBlurb}</p></div>
         <div className="flex justify-center py-2"><Dot p={draft} size={72} /></div>
@@ -86,13 +120,17 @@ export default function ProfileTab({ profile, setProfile, history, themeKey, set
           <Eyebrow>{L.homeCur}</Eyebrow>
           <div className="flex gap-2 mt-2">{CURRENCIES.map(cu => <button key={cu} onClick={() => setDraft({ ...draft, currency: cu })} className="rounded-lg mono" style={{ width: 44, height: 40, fontSize: 16, fontWeight: 600, background: draft.currency === cu ? C.brass : C.room, color: draft.currency === cu ? C.onAccent : C.ivory, border: `1px solid ${draft.currency === cu ? C.brass : C.line}` }}>{cu}</button>)}</div>
         </div>
-        <Btn full disabled={!draft.name.trim() || draft.handle.length < 2 || saving} onClick={handleSave}>{L.saveProfile}</Btn>
+        <div className="flex gap-2">
+          {profile.registered && <Btn tone="ghost" onClick={() => { setDraft(profile); setEditing(false); }}>{L.cancel}</Btn>}
+          <div className="flex-1"><Btn full disabled={!draft.name.trim() || draft.handle.length < 2 || saving} onClick={handleSave}>{L.saveProfile}</Btn></div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      <BackBar onBack={onBack} />
       <div className="flex items-center gap-4">
         <Dot p={profile} size={56} />
         <div className="flex-1"><div className="disp" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>{profile.name}</div><div className="mono" style={{ fontSize: 12, color: C.mute }}>{profile.handle}</div></div>
@@ -117,25 +155,11 @@ export default function ProfileTab({ profile, setProfile, history, themeKey, set
           : <div className="space-y-2">{history.map(h => <HistoryRow key={h.id} h={h} />)}</div>}
       </div>
 
-      <AccountSection {...{ userEmail, signOut, updatePassword }} />
-
-      <div>
-        <Eyebrow>{L.appearance}</Eyebrow>
-        <div className="mt-2 space-y-2">
-          <div className="flex items-center justify-between px-4 py-3 rounded-xl" style={{ background: C.room, border: `1px solid ${C.line}` }}>
-            <div className="flex items-center gap-2"><Palette size={15} style={{ color: C.brass }} /><span style={{ fontSize: 13.5, fontWeight: 600 }}>{L.theme}</span></div>
-            <div className="flex gap-2">{Object.entries(THEMES).map(([k, th]) => (
-              <button key={k} onClick={() => setThemeKey(k)} className="rounded-lg p-1 flex gap-0.5" style={{ border: `1px solid ${k === themeKey ? th.swatch[1] : C.line}`, background: th.swatch[0] }} aria-label={th.name[cur]}>
-                {th.swatch.map((c, i) => <span key={i} style={{ width: 9, height: 18, borderRadius: 3, background: c }} />)}
-              </button>))}</div>
-          </div>
-          <div className="flex items-center justify-between px-4 py-3 rounded-xl" style={{ background: C.room, border: `1px solid ${C.line}` }}>
-            <div className="flex items-center gap-2"><Languages size={15} style={{ color: C.brass }} /><span style={{ fontSize: 13.5, fontWeight: 600 }}>{L.langLabel}</span></div>
-            <div className="flex gap-2">{[["en", "English"], ["ru", "Русский"]].map(([k, lbl]) => (
-              <button key={k} onClick={() => setLang(k)} className="rounded-lg px-3 py-1.5" style={{ fontSize: 12, fontWeight: 600, background: lang === k ? C.brass : C.raise, color: lang === k ? C.onAccent : C.mute, border: `1px solid ${lang === k ? C.brass : C.line}` }}>{lbl}</button>))}</div>
-          </div>
-        </div>
+      <div className="pt-2" style={{ borderTop: `1px solid ${C.line}` }}>
+        <FriendsTab {...{ friends, setFriends, mkLog, gameLive, addSeatNamed }} />
       </div>
+
+      <AccountSection {...{ userEmail, signOut, updatePassword }} />
     </div>
   );
 }

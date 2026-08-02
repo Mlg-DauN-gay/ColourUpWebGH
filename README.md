@@ -27,11 +27,15 @@ Without a key, both features fall back gracefully to manual entry — the
 `ANTHROPIC_API_KEY` is only ever read server-side and never reaches the
 browser.
 
-### Accounts (required — Supabase)
+### Accounts (Supabase)
 
-An account is required to use the app: `profile`, `friends`, and `history`
-always live in [Supabase](https://supabase.com) (Postgres + Auth), keyed to
-the signed-in user, so they follow you to any device you log into.
+Browsing the app — home, setting up a table's stake and chips — needs no
+account. Signing in is only required at the moment a lobby actually opens
+(the point where other people are about to see and join the table), via a
+screen reached from the profile icon in the header. Once signed in,
+`profile`, `friends`, and `history` all live in
+[Supabase](https://supabase.com) (Postgres + Auth), keyed to the signed-in
+user, so they follow you to any device you log into.
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the dashboard, run the SQL in [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql)
@@ -66,16 +70,16 @@ resets but not for production signup volume.
 ```
 app/
   layout.jsx            fonts, root metadata
-  page.jsx               app shell: auth gate, theme/lang context, header, tab bar, game engine
+  page.jsx               app shell: theme/lang context, header, game engine, auth checkpoint at lobby-open
   api/vision/route.js    server-side Anthropic proxy
   join/[code]/page.jsx   landing page for scanned invite QR codes
   auth/callback/route.js exchanges a Supabase email-confirm/reset code for a session
   auth/reset/page.jsx    "set a new password" form, landed on after a reset-link click
 components/              Setup, Lobby, Fund, Live, Cashout, Reconcile, Settle,
-                         Done, PlayHome, FriendsTab, ProfileTab, AuthGate, ChipScanner, …
+                         Done, PlayHome, ProfileTab (profile + friends + account), AuthGate, ChipScanner, …
 lib/
   i18n.js                EN/RU dictionary + money()/locale helpers
-  themes.js               Trust / Night / Steel palettes as CSS custom properties
+  themes.js               the single Trust palette as CSS custom properties
   settle.js               minimal-transfer settlement algorithm
   chips.js                denomination ladder, assignDenoms, computeStacks
   useAppData.js           auth session + profile/friends/history, all Supabase-backed
@@ -88,11 +92,16 @@ proxy.js                  refreshes the Supabase session cookie on every request
 
 ## Notes
 
-- An account is required — `profile`, `friends`, and `history` always live in
-  Supabase, gated by row-level security (see `supabase/migrations/0001_init.sql`).
-  A signed-out visitor sees a sign-up/log-in screen instead of the app; a
-  signed-in user with no profile row yet is walked straight through profile
-  creation before anything else appears.
+- No bottom tab bar: the game flow is the whole screen, and the profile icon
+  (top right of the header — an avatar once signed in, a plain outline while
+  signed out) opens the merged profile/friends/account screen, with a back
+  arrow to return.
+- Signing in isn't required to browse or set up a table — only to open a
+  lobby (`components/Setup.jsx`'s "Open lobby" routes through `openLobby()`
+  in `app/page.jsx`, which sends a signed-out visitor to the profile screen
+  instead). A signed-in user with no profile row yet is walked straight
+  through profile creation there before the lobby opens.
+- One fixed palette (`lib/themes.js`) — no theme switcher.
 - The multi-phone QR join is still simulated (no realtime game backend yet);
   the lobby's QR code is real and scannable and encodes `/join/<code>`.
 - Reconciliation is locked: if counted chips don't match issued chips, the

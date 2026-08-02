@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Clock, Eye, Languages, Palette, ScrollText, Spade, User, Users } from "lucide-react";
-import { C, PALETTE, THEMES, themeVars } from "@/lib/themes";
+import { Clock, Eye, Languages, ScrollText, User } from "lucide-react";
+import { C, PALETTE, THEME, themeVars } from "@/lib/themes";
 import { DICT, money } from "@/lib/i18n";
 import { Lang } from "@/lib/LangContext";
 import { simplify } from "@/lib/settle";
@@ -18,25 +18,22 @@ import Cashout from "@/components/Cashout";
 import Reconcile from "@/components/Reconcile";
 import Settle from "@/components/Settle";
 import Done from "@/components/Done";
-import FriendsTab from "@/components/FriendsTab";
 import ProfileTab from "@/components/ProfileTab";
 import JoinSheet from "@/components/JoinSheet";
-import AuthGate from "@/components/AuthGate";
 
 const genCode = () => Array.from({ length: 6 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
 
 export default function ColourUpPage() {
-  const [themeKey, setThemeKey] = useState("trust");
   const [lang, setLang] = useState("en");
   const L = DICT[lang];
   const M = (n, cur) => money(n, cur, lang);
-  const t = THEMES[themeKey];
+  const t = THEME;
 
-  const [tab, setTab] = useState("play");
+  const [tab, setTab] = useState("play"); // play | profile
 
-  // account is mandatory — profile/friends/history always live in Supabase
-  // (see lib/useAppData.js). An unauthenticated visitor sees <AuthGate>
-  // instead of the app; see the render branches below.
+  // Account is only required once a lobby actually opens (see openLobby
+  // below) — browsing home/setup works signed out. profile/friends/history
+  // always live in Supabase once signed in (lib/useAppData.js).
   const {
     session, authReady, dataReady, userEmail,
     signUp, signIn, requestPasswordReset, updatePassword, signOut,
@@ -53,7 +50,6 @@ export default function ColourUpPage() {
   const [lobbyCode, setLobbyCode] = useState("");
   const [joinSheet, setJoinSheet] = useState(false);
   const [showLog, setShowLog] = useState(false);
-  const [showThemes, setShowThemes] = useState(false);
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -98,6 +94,19 @@ export default function ColourUpPage() {
     setLobbyCode(genCode()); setGp("setup"); setTab("play");
   }
 
+  // The stake/chip setup can be explored freely, but opening the lobby is
+  // where a real identity starts to matter (other players will see it, and
+  // the table needs to be attributable to someone) — that's the checkpoint
+  // where an account becomes mandatory.
+  function openLobby() {
+    if (!session) { setTab("profile"); return; }
+    if (!dataReady) return; // profile still loading — ignore the click rather than misfire on a stale default
+    if (!profile.registered) { setTab("profile"); return; }
+    upd("p0", { name: profile.name, color: profile.color });
+    setGp("lobby");
+    mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString()));
+  }
+
   function addSeatNamed(name, color) { setPlayers(ps => [...ps, mk(name, ps.length, false, color)]); }
   function simulateJoin() {
     const seatedNames = new Set(players.map(p => p.name));
@@ -126,10 +135,7 @@ export default function ColourUpPage() {
 
   const ctx = { L, lang, M };
 
-  // Auth is mandatory: resolve the session before showing anything, then
-  // gate on it. A signed-in user with no profile row yet is forced through
-  // profile creation before the rest of the app appears.
-  if (!authReady || (session && !dataReady)) {
+  if (!authReady) {
     return (
       <Lang.Provider value={ctx}>
         <div style={{ ...themeVars(t), background: C.ink, minHeight: "100vh", display: "grid", placeItems: "center" }}>
@@ -139,22 +145,12 @@ export default function ColourUpPage() {
     );
   }
 
-  if (!session) {
-    return (
-      <Lang.Provider value={ctx}>
-        <div style={themeVars(t)}>
-          <AuthGate {...{ signUp, signIn, requestPasswordReset, themeKey, setThemeKey, lang, setLang }} />
-        </div>
-      </Lang.Provider>
-    );
-  }
-
-  const needsProfile = !profile.registered;
+  const showDeviceSwitcher = tab === "play" && gameLive && players.length > 0;
 
   return (
     <Lang.Provider value={ctx}>
       <div style={{ ...themeVars(t), background: C.ink, minHeight: "100vh", color: C.ivory }}>
-        <div className="mx-auto body" style={{ maxWidth: 460, paddingBottom: needsProfile ? 40 : 108 }}>
+        <div className="mx-auto body" style={{ maxWidth: 460, paddingBottom: showDeviceSwitcher ? 90 : 24 }}>
           {/* header */}
           <div className="flex items-center justify-between px-5 pt-6 pb-4">
             <div className="flex items-center gap-2">
@@ -163,20 +159,7 @@ export default function ColourUpPage() {
             </div>
             <div className="flex items-center gap-2.5">
               {started && gameLive && <span className="mono flex items-center gap-1" style={{ fontSize: 11, color: C.mute }}><Clock size={11} /> {hhmm}</span>}
-              <div className="relative">
-                <button onClick={() => setShowThemes(s => !s)} className="grid place-items-center rounded-full" style={{ width: 28, height: 28, border: `1px solid ${C.line}`, background: showThemes ? C.raise : C.room }} aria-label="Palette">
-                  <Palette size={14} style={{ color: C.brass }} />
-                </button>
-                {showThemes && (
-                  <div className="absolute right-0 mt-2 p-2 rounded-2xl z-40 flex gap-2" style={{ background: C.sheet, border: `1px solid ${C.line}` }}>
-                    {Object.entries(THEMES).map(([k, th]) => (
-                      <button key={k} onClick={() => { setThemeKey(k); setShowThemes(false); }} className="rounded-xl p-1.5 flex gap-1" style={{ border: `1px solid ${k === themeKey ? th.swatch[1] : "transparent"}`, background: th.swatch[0] }} aria-label={th.name[lang]}>
-                        {th.swatch.map((c, i) => <span key={i} style={{ width: 14, height: 22, borderRadius: 4, background: c }} />)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <button onClick={() => setShowLog(s => !s)} style={{ color: showLog ? C.brass : C.mute }} aria-label="Ledger"><ScrollText size={16} /></button>
               <button onClick={() => setLang(l => l === "en" ? "ru" : "en")} className="flex items-center gap-1 rounded-full px-2 py-1" style={{ border: `1px solid ${C.line}`, background: C.room, height: 28 }} aria-label="Language">
                 <Languages size={13} style={{ color: C.brass }} />
                 <span className="mono" style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: ".06em" }}>
@@ -185,7 +168,11 @@ export default function ColourUpPage() {
                   <span style={{ color: lang === "ru" ? C.ivory : C.mute }}>RU</span>
                 </span>
               </button>
-              <button onClick={() => setShowLog(s => !s)} style={{ color: showLog ? C.brass : C.mute }} aria-label="Ledger"><ScrollText size={16} /></button>
+              <button onClick={() => setTab(tb => tb === "profile" ? "play" : "profile")} aria-label="Profile">
+                {profile.registered
+                  ? <Dot p={profile} size={28} />
+                  : <span className="grid place-items-center rounded-full" style={{ width: 28, height: 28, border: `1px solid ${C.line}`, background: tab === "profile" ? C.raise : C.room }}><User size={14} style={{ color: C.brass }} /></span>}
+              </button>
             </div>
           </div>
 
@@ -193,47 +180,34 @@ export default function ColourUpPage() {
           {showLog && <LedgerPanel log={log} />}
 
           <div className="px-5">
-            {needsProfile ? (
-              <ProfileTab {...{ profile, setProfile, history, themeKey, setThemeKey, lang, setLang, userEmail, signOut, updatePassword }} />
-            ) : (<>
-              {tab === "play" && (<>
-                {gp === "home" && <PlayHome {...{ profile, history, gameLive, startHost, setJoinSheet, setGp, setTab }} />}
-                {gp === "setup" && <Setup {...{ cfg, setCfg, players, setGp, mkLog }} />}
-                {gp === "lobby" && <Lobby {...{ cfg, players, viewer, upd, allAgreed, setGp, mkLog, lobbyCode, simulateJoin }} />}
-                {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, setGp, setStarted, mkLog }} />}
-                {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, upd, mkLog, setGp }} />}
-                {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, upd, rate, allSubmitted, setGp, mkLog }} />}
-                {gp === "reconcile" && <Reconcile {...{ players, upd, drift, chipsOut, counted, setGp, mkLog }} />}
-                {gp === "settle" && <Settle {...{ cfg, nets, transfers, players, viewer, upd, allApproved, release }} />}
-                {gp === "done" && <Done {...{ cfg, nets, transfers, elapsed, backHome, players }} />}
-              </>)}
-              {tab === "friends" && <FriendsTab {...{ friends, setFriends, mkLog, gameLive, addSeatNamed }} />}
-              {tab === "profile" && <ProfileTab {...{ profile, setProfile, history, themeKey, setThemeKey, lang, setLang, userEmail, signOut, updatePassword }} />}
-            </>)}
+            {tab === "play" ? (<>
+              {gp === "home" && <PlayHome {...{ profile, history, gameLive, startHost, setJoinSheet, setGp, setTab }} />}
+              {gp === "setup" && <Setup {...{ cfg, setCfg, players, openLobby, mkLog }} />}
+              {gp === "lobby" && <Lobby {...{ cfg, players, viewer, upd, allAgreed, setGp, mkLog, lobbyCode, simulateJoin }} />}
+              {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, setGp, setStarted, mkLog }} />}
+              {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, upd, mkLog, setGp }} />}
+              {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, upd, rate, allSubmitted, setGp, mkLog }} />}
+              {gp === "reconcile" && <Reconcile {...{ players, upd, drift, chipsOut, counted, setGp, mkLog }} />}
+              {gp === "settle" && <Settle {...{ cfg, nets, transfers, players, viewer, upd, allApproved, release }} />}
+              {gp === "done" && <Done {...{ cfg, nets, transfers, elapsed, backHome, players }} />}
+            </>) : (
+              <ProfileTab key={dataReady ? "ready" : "loading"} {...{
+                session, dataReady, signUp, signIn, requestPasswordReset,
+                profile, setProfile, history, userEmail, signOut, updatePassword,
+                friends, setFriends, mkLog, gameLive, addSeatNamed,
+                onBack: () => setTab("play"),
+              }} />
+            )}
           </div>
 
           {/* device switcher during a live game */}
-          {!needsProfile && tab === "play" && gameLive && players.length > 0 && (
-            <div className="fixed left-0 right-0 mx-auto" style={{ maxWidth: 460, bottom: 68 }}>
-              <div className="mx-4 mb-2 px-3 py-2 rounded-2xl flex items-center gap-2 overflow-x-auto" style={{ background: C.raise + "ee", border: `1px solid ${C.line}`, backdropFilter: "blur(12px)" }}>
+          {showDeviceSwitcher && (
+            <div className="fixed left-0 right-0 mx-auto" style={{ maxWidth: 460, bottom: 16 }}>
+              <div className="mx-4 px-3 py-2 rounded-2xl flex items-center gap-2 overflow-x-auto" style={{ background: C.raise + "ee", border: `1px solid ${C.line}`, backdropFilter: "blur(12px)" }}>
                 <Eye size={13} style={{ color: C.mute, flexShrink: 0 }} />
                 {players.map(p => (
                   <button key={p.id} onClick={() => setMe(p.id)} className="shrink-0 px-2 py-1 rounded-full flex items-center gap-1.5" style={{ background: me === p.id ? p.color + "22" : "transparent", border: `1px solid ${me === p.id ? p.color : "transparent"}` }}>
                     <Dot p={p} size={18} /><span style={{ fontSize: 11, fontWeight: 600, color: me === p.id ? C.ivory : C.mute }}>{p.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* bottom tab bar */}
-          {!needsProfile && (
-            <div className="fixed left-0 right-0 bottom-0 mx-auto" style={{ maxWidth: 460 }}>
-              <div className="flex" style={{ background: C.sheet + "f2", borderTop: `1px solid ${C.line}`, backdropFilter: "blur(12px)" }}>
-                {[["play", L.tabPlay, Spade], ["friends", L.tabFriends, Users], ["profile", L.tabYou, User]].map(([k, label, Icon]) => (
-                  <button key={k} onClick={() => setTab(k)} className="flex-1 flex flex-col items-center gap-1 py-2.5" style={{ color: tab === k ? C.brass : C.mute }}>
-                    <Icon size={19} fill={tab === k && k === "play" ? C.brass : "none"} />
-                    <span style={{ fontSize: 10.5, fontWeight: 600 }}>{label}</span>
                   </button>
                 ))}
               </div>

@@ -6,8 +6,8 @@ import { useL } from "@/lib/LangContext";
 import { Btn, Eyebrow, Field } from "./atoms";
 import ChipScanner from "./ChipScanner";
 
-export default function Setup({ cfg, setCfg, players, setGp, mkLog }) {
-  const { L, M } = useL();
+export default function Setup({ cfg, setCfg, players, openLobby }) {
+  const { L } = useL();
   const [scanning, setScanning] = useState(false);
   return (
     <div className="space-y-7">
@@ -77,7 +77,7 @@ export default function Setup({ cfg, setCfg, players, setGp, mkLog }) {
         <QrCode size={16} style={{ color: C.brass, flexShrink: 0 }} />
         <span style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.4 }}>{L.seatsAfter}</span>
       </div>
-      <Btn full onClick={() => { setGp("lobby"); mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString())); }}>{L.openLobby} <ChevronRight size={15} className="inline -mt-0.5" /></Btn>
+      <Btn full onClick={openLobby}>{L.openLobby} <ChevronRight size={15} className="inline -mt-0.5" /></Btn>
 
       {scanning && (
         <ChipScanner P={Math.max(players.length, 1)} onClose={() => setScanning(false)}
