@@ -151,26 +151,83 @@ Then `npm run lint` and `npm run build` should both be clean (one pre-existing
 table → Setup (no login needed) → Open lobby (triggers sign-up) → create
 profile → should land directly in the lobby, not stranded on profile.
 
+## Milestone 2, slice 1 — real lobby multiplayer (done this session)
+
+The single-device "device switcher" simulation is gone. There's now a real
+hosted lobby: the host creates an actual `games` row, guests join via a
+real `/join/<code>` link, and the Lobby screen syncs live via Supabase
+Realtime across devices. **Fund through Settle/Done are still local state**
+this slice, deliberately — see "What's next" below for the follow-up.
+
+- **Auth model** (explicit user decision, overriding the original spec's
+  anonymous-sign-in idea without discussion): guests join the lobby with
+  **no account at all** — they sign in anonymously
+  (`supabase.auth.signInAnonymously()`, already enabled in the dashboard)
+  the moment they open a join link, which gives them a real `auth.uid()`
+  so all existing RLS patterns work unchanged. They're only asked to
+  create a real account (email+password) at the **Fund** step, via
+  `supabase.auth.updateUser({email,password})` — this **upgrades the same
+  anonymous session in place** (same `auth.uid()` before/after), so their
+  seat/entries rows never need migrating. This is a distinct mechanism
+  from `AuthGate`'s `signUp`, which would create a new user and orphan the
+  guest's seat — don't conflate the two if extending this later.
+- **New schema**: `supabase/migrations/0002_multiplayer.sql` adds `games`,
+  `game_players`, `entries`, `ledger`, plus a host-only `advance_phase()`
+  RPC (SECURITY INVOKER — relies on RLS, not elevated privilege) and
+  enables Realtime replication on `games`/`game_players`. **This migration
+  has not been run against the live Supabase project** — do that via the
+  SQL Editor before testing any of this for real. `entries`/`ledger` ship
+  with correct ownership RLS now but have zero callers yet (see below).
+- **New hook**: `lib/useGameData.js` — mirrors `useAppData.js`'s
+  conventions, owns the real `games`/`game_players` state + Realtime
+  subscription, exposes `createGame`/`joinGame`/`agree`/`advancePhase`.
+- **Real join flow**: `app/join/[code]/page.jsx` is now a thin wrapper
+  around `app/join/[code]/JoinClient.jsx`, which does the anonymous
+  sign-in → game lookup → seat form → insert → redirect to `/?game=<id>`.
+  The old static "type this code in manually" stub is gone.
+- **The Lobby → Fund hand-off**: the moment the host advances the phase
+  (or a guest observes it via Realtime), the real `game_players` rows are
+  copied into the existing local `players` array (same ids), so
+  Fund/Live/Cashout/Reconcile/Settle/Done run **completely unchanged** —
+  see `handleLobbyBecameFund()` in `app/page.jsx`.
+- **Removed**: the bottom device-switcher pill bar, `simulateJoin()`, and
+  Lobby's "Simulate join" button — real joins replace all of it. No
+  dev-flag fallback was kept (explicit user choice).
+- **Known, deliberate gaps** (not oversights — see the migration's and
+  `app/page.jsx`'s comments for detail): no leave-lobby/cancel-table
+  action yet (an abandoned lobby just sits at `phase='lobby'` forever);
+  refreshing mid-Fund-through-Settle loses local state (only the Lobby
+  phase is actually persisted this slice — `app/page.jsx` shows a
+  "table already in progress" message rather than silently misrendering
+  in that case); `components/JoinSheet.jsx` (manual code-entry sheet)
+  is still the old non-functional stub.
+
 ## What's next
 
 The user gave a **7-milestone roadmap** (verbatim, appended below) for
 turning this from a single-device simulation into a real multiplayer app.
-**Milestone 1 is done but was substantially reworked from that spec** per
-the deviations above — carry those forward into M2+ rather than reverting to
-what the original M1 bullets describe (e.g. don't reintroduce anonymous
-sign-in for the QR-join flow without checking with the user first, since
-that directly conflicts with the "email + password only" decision).
+**Milestone 1 is done but was substantially reworked from that spec**, and
+**Milestone 2 is now underway but only its first slice is done** (real
+lobby only — see above). The natural next slice is rewiring Fund → Live →
+Cashout → Reconcile → Settle → Done onto the same real
+`entries`/`ledger` tables and Realtime pattern established for the lobby,
+plus the `player_counts`/`transfers` tables and the count-privacy +
+recount-lock RPCs from the original Milestone 3 spec — deliberately not
+built yet since their shape depends on that Cashout/Reconcile design.
+Prioritise correctness of that integrity model over speed once you get
+there, per the original spec's own instruction.
 
-Before starting Milestone 2, given the pattern this session established:
-confirm scope with the user rather than assuming, especially anywhere the
-original spec's assumptions (anonymous sign-in, solo mode, always-visible
-nav chrome) might resurface. The user iterates fast and corrects
-architecture choices directly — expect to adjust mid-flight rather than
-plan everything upfront.
+Before extending further: confirm scope with the user rather than
+assuming, especially anywhere the original spec's assumptions (solo mode,
+always-visible nav chrome) might resurface. The user iterates fast and
+corrects architecture choices directly — expect to adjust mid-flight
+rather than plan everything upfront.
 
-Also worth raising proactively early in the next session: **where will this
-actually be hosted?** No deployment target has been chosen. Vercel is the
-natural fit for Next.js but hasn't been discussed.
+**Deployment**: still nothing actually deployed. Vercel was recommended
+(natural fit for Next.js, generous free Hobby tier, no issue with
+Supabase Realtime since the browser talks to Supabase directly) but the
+user hasn't connected the repo to a Vercel account yet — that step needs
+their account, not a session running against this repo.
 
 ---
 
