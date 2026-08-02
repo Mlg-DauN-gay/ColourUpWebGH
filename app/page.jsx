@@ -52,6 +52,7 @@ export default function ColourUpPage() {
   const [joinSheet, setJoinSheet] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [pendingLobby, setPendingLobby] = useState(false); // "Open lobby" was clicked signed out — finish once signed in
 
   useEffect(() => {
     if (!started) return;
@@ -92,7 +93,7 @@ export default function ColourUpPage() {
     const host = mk(profile.name, 0, true, profile.color); host.id = "p0";
     setPlayers([host]);
     setMe("p0"); setCfg(c => ({ ...c, cur: profile.currency, scan: null, chips: c.buyIn })); setLog([]); setStarted(null); setElapsed(0);
-    setLobbyCode(genCode()); setGp("setup"); setResumeGp(null); setTab("play");
+    setLobbyCode(genCode()); setGp("setup"); setResumeGp(null); setPendingLobby(false); setTab("play");
   }
 
   // The header logo — standard "tap the logo to go home" — but a live game
@@ -105,18 +106,30 @@ export default function ColourUpPage() {
   }
   function resumeTable() { if (resumeGp) setGp(resumeGp); }
 
+  function finishOpenLobby() {
+    upd("p0", { name: profile.name, color: profile.color });
+    setGp("lobby");
+    setTab("play");
+    mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString()));
+  }
+
   // The stake/chip setup can be explored freely, but opening the lobby is
   // where a real identity starts to matter (other players will see it, and
   // the table needs to be attributable to someone) — that's the checkpoint
-  // where an account becomes mandatory.
+  // where an account becomes mandatory. If one isn't ready yet, the profile
+  // screen takes over and the effect below finishes opening the lobby the
+  // moment sign-up/sign-in and profile creation are done.
   function openLobby() {
-    if (!session) { setTab("profile"); return; }
+    if (!session || !profile.registered) { setPendingLobby(true); setTab("profile"); return; }
     if (!dataReady) return; // profile still loading — ignore the click rather than misfire on a stale default
-    if (!profile.registered) { setTab("profile"); return; }
-    upd("p0", { name: profile.name, color: profile.color });
-    setGp("lobby");
-    mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString()));
+    finishOpenLobby();
   }
+
+  useEffect(() => {
+    if (pendingLobby && session && dataReady && profile.registered) {
+      (async () => { setPendingLobby(false); finishOpenLobby(); })();
+    }
+  }, [pendingLobby, session, dataReady, profile.registered, finishOpenLobby]);
 
   function addSeatNamed(name, color) { setPlayers(ps => [...ps, mk(name, ps.length, false, color)]); }
   function simulateJoin() {
@@ -142,7 +155,7 @@ export default function ColourUpPage() {
     mkLog(L.settledReceiptLog(L.transferN(transfers.length)));
     mkLog(L.savedLog);
   }
-  function backHome() { setGp("home"); setResumeGp(null); setPlayers([]); setStarted(null); setElapsed(0); setLog([]); }
+  function backHome() { setGp("home"); setResumeGp(null); setPendingLobby(false); setPlayers([]); setStarted(null); setElapsed(0); setLog([]); }
 
   const ctx = { L, lang, M };
 
@@ -179,7 +192,7 @@ export default function ColourUpPage() {
                   <span style={{ color: lang === "ru" ? C.ivory : C.mute }}>RU</span>
                 </span>
               </button>
-              <button onClick={() => setTab(tb => tb === "profile" ? "play" : "profile")} aria-label="Profile">
+              <button onClick={() => { setPendingLobby(false); setTab(tb => tb === "profile" ? "play" : "profile"); }} aria-label="Profile">
                 {profile.registered
                   ? <Dot p={profile} size={28} />
                   : <span className="grid place-items-center rounded-full" style={{ width: 28, height: 28, border: `1px solid ${C.line}`, background: tab === "profile" ? C.raise : C.room }}><User size={14} style={{ color: C.brass }} /></span>}
@@ -206,7 +219,7 @@ export default function ColourUpPage() {
                 session, dataReady, signUp, signIn, requestPasswordReset,
                 profile, setProfile, history, userEmail, signOut, updatePassword,
                 friends, setFriends, mkLog, gameLive, addSeatNamed,
-                onBack: () => setTab("play"),
+                onBack: () => { setPendingLobby(false); setTab("play"); },
               }} />
             )}
           </div>
