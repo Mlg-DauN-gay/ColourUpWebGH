@@ -77,6 +77,27 @@ create index if not exists game_players_user_id_idx on public.game_players (user
 
 alter table public.game_players enable row level security;
 
+-- Helper for the co-member-visibility policy below. A game_players SELECT
+-- policy can't query game_players directly in a subquery — Postgres treats
+-- that as infinite recursion (it would have to re-apply this same policy
+-- to evaluate the subquery's rows) and refuses with "infinite recursion
+-- detected in policy for relation game_players". Routing the membership
+-- check through a SECURITY DEFINER function sidesteps this: the function
+-- runs as its owner (bypassrls), so its internal query isn't re-checked
+-- against the calling policy.
+create or replace function public.is_game_member(p_game_id uuid, p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.game_players
+    where game_id = p_game_id and user_id = p_user_id
+  );
+$$;
+
 -- Co-member visibility: you can see the full roster of any game you're
 -- already part of (as host or as a seated guest), never someone else's.
 create policy "seated players see their game's roster"
@@ -84,10 +105,7 @@ create policy "seated players see their game's roster"
   to authenticated
   using (
     exists (select 1 from public.games g where g.id = game_players.game_id and g.host_id = auth.uid())
-    or exists (
-      select 1 from public.game_players gp2
-      where gp2.game_id = game_players.game_id and gp2.user_id = auth.uid()
-    )
+    or public.is_game_member(game_players.game_id, auth.uid())
   );
 
 -- Anyone signed in (including anonymous guests) may seat themselves — but
