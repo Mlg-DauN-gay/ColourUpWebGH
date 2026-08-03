@@ -168,12 +168,16 @@ function ColourUpApp() {
   }, [pendingLobby, session, dataReady, profile.registered, finishOpenLobby]);
 
   // The Lobby -> Fund hand-off: the real game_players seats become the local
-  // `players` array (same ids), so Fund/Live/Cashout/Reconcile/Settle/Done
-  // keep working unchanged on local state, exactly as before this slice.
+  // `players` array (same ids). Entries (buy-ins/re-buys) are real too as of
+  // this slice — seeded from whatever's already in gameData.entries (a late
+  // joiner or a refresh mid-fund can land here after some buy-ins already
+  // happened) and kept live by the sync effect below. Live through
+  // Done still run unchanged on local-only state past this point.
   function handleLobbyBecameFund() {
     setPlayers(gameData.seats.map(s => ({
       id: s.id, name: s.name, color: s.color, host: s.host, agreed: s.agreed,
-      entries: [], chips: null, submitted: false, approved: false, out: false,
+      entries: gameData.entries.filter(e => e.gamePlayerId === s.id),
+      chips: null, submitted: false, approved: false, out: false,
     })));
     setMe(gameData.viewer?.id ?? null);
     setGp("fund");
@@ -196,11 +200,47 @@ function ColourUpApp() {
     }
   }, [gp, gameData.game?.phase, handleLobbyBecameFund]);
 
-  function recordEntry(pid, amount, reason) {
+  // Keeps every device's view of who's paid in sync with the real `entries`
+  // table (Realtime-pushed) while funding is in progress — this is the fix
+  // for the game getting stuck on a buy-in that already happened on someone
+  // else's phone. Deliberately scoped to just the `entries` field so the
+  // rest of each player's local-only state (chips/submitted/approved/out,
+  // still unwired past this phase) is left untouched.
+  useEffect(() => {
+    if (gp !== "fund" && gp !== "live") return;
+    (async () => {
+      setPlayers(ps => ps.map(p => ({ ...p, entries: gameData.entries.filter(e => e.gamePlayerId === p.id) })));
+    })();
+  }, [gameData.entries, gp]);
+
+  async function recordEntry(pid, amount, reason) {
     const p = players.find(x => x.id === pid);
-    upd(pid, { entries: [...p.entries, { amount, chips: amount * rate, at: Date.now(), kind: reason }] });
-    mkLog(L.recordedLog(p.name, reason === "buy-in" ? L.buyinReason : L.rebuyReason, M(amount, cfg.cur)));
+    try {
+      await gameData.recordEntry(pid, amount, amount * rate, reason);
+      mkLog(L.recordedLog(p.name, reason === "buy-in" ? L.buyinReason : L.rebuyReason, M(amount, cfg.cur)));
+    } catch (err) {
+      mkLog(err.message);
+    }
   }
+
+  // Host-only, mirrors startFunding's shape: advance the real game row
+  // (RPC checks everyone's funded), then move the host's own screen; guests
+  // pick this up via the effect right below, exactly like lobby->fund.
+  async function startLive() {
+    try {
+      await gameData.advancePhase("live");
+      setGp("live"); setStarted(Date.now()); mkLog(L.cardsUp);
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+
+  useEffect(() => {
+    if (gp !== "fund" || gameData.game?.phase !== "live") return;
+    (async () => {
+      setGp("live"); setStarted(Date.now()); mkLog(L.cardsUp);
+    })();
+  }, [gp, gameData.game?.phase, mkLog, L.cardsUp]);
 
   function release() {
     const host = players.find(p => p.host);
@@ -281,7 +321,7 @@ function ColourUpApp() {
                   onStart: startFunding, mkLog, lobbyCode: gameData.game?.code || "",
                 }} />
               ))}
-              {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, setGp, setStarted, mkLog, session, upgradeAnonymousAccount }} />}
+              {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount }} />}
               {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, upd, mkLog, setGp }} />}
               {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, upd, rate, allSubmitted, setGp, mkLog }} />}
               {gp === "reconcile" && <Reconcile {...{ players, upd, drift, chipsOut, counted, setGp, mkLog }} />}

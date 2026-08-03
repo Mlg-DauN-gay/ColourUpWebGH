@@ -44,7 +44,7 @@ function AnonymousUpgradeGate({ upgradeAnonymousAccount }) {
   );
 }
 
-export default function Fund({ cfg, players, viewer, recordEntry, allFunded, setGp, setStarted, mkLog, session, upgradeAnonymousAccount }) {
+export default function Fund({ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount }) {
   const { L, M } = useL();
   const paid = viewer.entries.length > 0;
 
@@ -72,7 +72,9 @@ export default function Fund({ cfg, players, viewer, recordEntry, allFunded, set
       </div>
       {!paid
         ? <Btn full onClick={() => recordEntry(viewer.id, cfg.buyIn, "buy-in")}><Wallet size={15} className="inline -mt-0.5 mr-1.5" /> {L.buyInTitle} · {M(cfg.buyIn, cfg.cur)}</Btn>
-        : <Btn full disabled={!allFunded} onClick={() => { setGp("live"); setStarted(Date.now()); mkLog(L.cardsUp); }}>{allFunded ? L.deal : L.waitingBuyins(players.filter(p => !p.entries.length).length)}</Btn>}
+        : isHost
+          ? <Btn full disabled={!allFunded} onClick={startLive}>{allFunded ? L.deal : L.waitingBuyins(players.filter(p => !p.entries.length).length)}</Btn>
+          : <div className="mono text-center" style={{ fontSize: 11, color: C.mute }}>{allFunded ? L.waitingForHost : L.waitingBuyins(players.filter(p => !p.entries.length).length)}</div>}
     </div>
   );
 }

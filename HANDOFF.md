@@ -293,6 +293,60 @@ with a subsequent state update; or the guest's Fund-phase
 anonymous-upgrade gate interacting oddly with a stale `session`
 reference. Don't assume either without the console output.
 
+### Root cause found + fixed: Fund phase now syncs for real
+
+The "bugs out" report above was diagnosed, not by reading code, but by
+literally simulating two independent devices: one real browser as the
+host, and a second identity driven straight against the Supabase REST API
+with its own fresh anonymous-sign-in token (a single browser's tabs all
+share one cookie jar, so they can't stand in for two real devices — see
+the note on this earlier in this file, under the M2-slice-1 RLS section).
+
+The actual bug: Fund ran entirely on each device's own local `players`
+`useState`, seeded once at the lobby hand-off and never touched again. A
+buy-in recorded on one phone was invisible to every other phone —
+`allFunded` could never become true on a device that didn't personally
+witness every buy-in, so the game could get stuck forever on "waiting for
+a buy-in" that had, in fact, already happened elsewhere. The host's "Deal"
+button made it worse: it only ever called local `setGp("live")`, with no
+gating (not even host-only) and no broadcast, so it could never actually
+move every device into Live together even once funding looked complete.
+
+**Fixed** (`supabase/migrations/0005_sync_fund_phase.sql`,
+`lib/useGameData.js`, `app/page.jsx`, `components/Fund.jsx`):
+- `entries` (already existed with correct RLS from 0002, just wasn't in
+  the realtime publication) now syncs live the same way `game_players`
+  does — `useGameData` fetches it, subscribes to `INSERT`s, and exposes
+  `recordEntry()`/`allFunded` computed from the real rows.
+- `app/page.jsx` keeps local `players[].entries` in sync with
+  `gameData.entries` via an effect scoped to the fund/live phases only —
+  deliberately not touching `chips`/`submitted`/`approved`/`out`, which
+  are still local-only past this point (see the task below).
+- `advance_phase()` now supports `fund -> live` (previously only
+  `lobby -> fund`), gated on every seated player having at least one
+  `entries` row — same "friendly error in front of the real RLS
+  boundary" shape as the existing transition.
+- The "Deal" button is now host-only (calls `advancePhase("live")`
+  through the RPC); guests see a "waiting for the host" message and pick
+  up the transition automatically via a Realtime-watching effect, the
+  same pattern already proven for lobby -> fund.
+
+**Verified live**, not just by reading the diff: hosted a real table in a
+real browser, joined + agreed + bought in as a guest purely via curl with
+a fresh anonymous token, and watched the guest's buy-in and the
+fund -> live transition both appear on the host's screen with zero page
+reload. Then confirmed directly against the database (as the guest's own
+session) that `games.phase` had actually flipped to `'live'` — proving a
+real guest device would auto-follow via the same effect, not just the
+host's own screen updating.
+
+**Deliberately not touched this pass**: Cashout, Reconcile, Settle, and
+Done are still 100% local-only, same architecture gap Fund just had. That
+needs `player_counts`/`transfers` tables plus the count-privacy RLS and
+host-only recount-lock RPC from the original Milestone 3 spec (below) —
+called out there as security-critical, so it deserves its own careful
+pass rather than a rushed copy of this fix's pattern.
+
 ## What's next
 
 The user gave a **7-milestone roadmap** (verbatim, appended below) for
