@@ -5,15 +5,29 @@ import { useL } from "@/lib/LangContext";
 import { Eyebrow } from "./atoms";
 import HistoryRow from "./HistoryRow";
 
-export default function PlayHome({ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab }) {
+export default function PlayHome({ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab, lastCfg, M, openIntro }) {
   const { L } = useL();
   const recent = history.slice(0, 3);
   return (
     <div className="space-y-6">
       <div>
         <div className="disp" style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-.035em", lineHeight: 1.05 }}>{L.homeHi(profile.name)}</div>
-        <p className="mt-2" style={{ fontSize: 13.5, color: C.mute, lineHeight: 1.5 }}>{L.homeSub}</p>
+        <div className="flex items-center justify-between mt-2 gap-3">
+          <p style={{ fontSize: 13.5, color: C.mute, lineHeight: 1.5 }}>{L.homeSub}</p>
+          {openIntro && <button onClick={openIntro} className="shrink-0 mono" style={{ fontSize: 11, color: C.brass, whiteSpace: "nowrap" }}>{L.introReopen}</button>}
+        </div>
       </div>
+
+      {!resumeGp && lastCfg?.title && (
+        <button onClick={startHost} className="w-full text-left p-3.5 rounded-2xl flex items-center gap-3" style={{ background: C.raise, border: `1px dashed ${C.line}` }}>
+          <span className="grid place-items-center rounded-full shrink-0" style={{ width: 30, height: 30, background: C.brassSoft, color: C.brass }}><Plus size={14} /></span>
+          <div className="flex-1 min-w-0">
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: C.ivory }}>{L.rehostTitle}</div>
+            <div className="figure truncate" style={{ fontSize: 11, color: C.mute }}>{lastCfg.title} · {M ? M(lastCfg.buyIn, lastCfg.cur) : `${lastCfg.buyIn}${lastCfg.cur}`}</div>
+          </div>
+          <ChevronRight size={16} style={{ color: C.mute, flexShrink: 0 }} />
+        </button>
+      )}
 
       {resumeGp && (
         <button onClick={resumeTable} className="w-full text-left p-4 rounded-2xl flex items-center gap-3" style={{ background: C.brassSoft, border: `1px solid ${C.brass}` }}>

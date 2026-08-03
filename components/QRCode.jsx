@@ -4,7 +4,7 @@ import QRCodeLib from "qrcode";
 
 // A real, scannable QR code encoding `value` (the join URL). Rendered as an
 // SVG data URL so it stays crisp at any size.
-export default function QRCode({ value, size = 168, fg = "#141018", bg = "#F4F1EA" }) {
+export default function QRCode({ value, size = 168, fg = "#1A1109", bg = "#F3E7D6" }) {
   const [svg, setSvg] = useState(null);
 
   useEffect(() => {

@@ -14,7 +14,7 @@ export default function PotRail({ inAll, chipsOut, counted, gp, cfg, drift }) {
       <div className="flex items-end justify-between">
         <div>
           <Eyebrow>{counting ? L.countedIssued : L.inPot}</Eyebrow>
-          <div className="disp mt-1" style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-.03em", lineHeight: 1 }}>
+          <div className="figure mt-1" style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-.01em", lineHeight: 1, paddingBottom: 7, borderBottom: `2px dashed ${C.line}` }}>
             {counting ? <>{counted.toLocaleString()}<span style={{ color: C.mute, fontSize: 18, fontWeight: 500 }}> / {chipsOut.toLocaleString()}</span></> : M(inAll, cfg.cur)}
           </div>
         </div>

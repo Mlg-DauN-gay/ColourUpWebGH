@@ -30,7 +30,7 @@ export default function Lobby({ cfg, players, viewer, isHost, allAgreed, onAgree
       <div className="p-4 rounded-2xl" style={{ background: C.room, border: `1px solid ${C.line}` }}>
         <Eyebrow>{L.invite}</Eyebrow>
         <div className="flex gap-4 mt-3">
-          <div className="shrink-0 p-2 rounded-2xl" style={{ background: "#F4F1EA" }}><QRCode value={link} size={116} /></div>
+          <div className="shrink-0 p-2 rounded-2xl" style={{ background: "#F3E7D6" }}><QRCode value={link} size={116} /></div>
           <div className="flex-1 flex flex-col justify-between py-0.5">
             <div>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{L.scanToJoin}</div>

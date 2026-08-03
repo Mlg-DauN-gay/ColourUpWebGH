@@ -32,16 +32,36 @@ export default function Done({ cfg, nets, transfers, elapsed, backHome, players 
         ))}
       </div>
       {transfers.length > 0 && (
-        <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
-          <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: C.raise }}><ArrowRight size={13} style={{ color: C.brass }} /><Eyebrow tone={C.brass}>{L.transfers}</Eyebrow></div>
-          {transfers.map((t, i) => (
-            <div key={i} className="px-4 py-3 flex items-center gap-2" style={{ background: C.room, borderTop: `1px solid ${C.line}` }}>
-              <span style={{ fontSize: 13.5, fontWeight: 500 }}>{t.from.name}</span>
-              <ArrowRight size={13} style={{ color: C.mute }} />
-              <span style={{ fontSize: 13.5, fontWeight: 500 }}>{t.to.name}</span>
-              <span className="mono flex-1 text-right" style={{ fontSize: 14, fontWeight: 600, color: C.brass }}>{M(t.amount, cfg.cur)}</span>
+        <div className="space-y-3">
+          {/* The signature moment: every seat's position colouring up into
+              the fewest transfers that settle the table — dramatizing the
+              app's actual value proposition instead of just stating it. */}
+          <div className="flex items-center justify-center gap-3 py-1">
+            <div className="flex -space-x-2.5">
+              {players.map((p, i) => <Chip key={p.id} size={16} color={p.color} spot="rgba(255,255,255,.25)" />)}
             </div>
-          ))}
+            <ArrowRight size={14} style={{ color: C.mute, flexShrink: 0 }} />
+            <div className="flex -space-x-1.5">
+              {transfers.map((_, i) => (
+                <span key={i} style={{ animation: `colour-up-settle .5s cubic-bezier(.2,.8,.3,1) ${i * 0.09}s both` }}>
+                  <Chip size={24} color={C.brass} />
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="text-center mono" style={{ fontSize: 11, color: C.mute }}>{L.colourUpSummary(players.length, transfers.length)}</div>
+
+          <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${C.line}` }}>
+            <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: C.raise }}><ArrowRight size={13} style={{ color: C.brass }} /><Eyebrow tone={C.brass}>{L.transfers}</Eyebrow></div>
+            {transfers.map((t, i) => (
+              <div key={i} className="px-4 py-3 flex items-center gap-2" style={{ background: C.room, borderTop: `1px solid ${C.line}`, animation: `colour-up-settle .4s ease ${i * 0.06}s both` }}>
+                <span style={{ fontSize: 13.5, fontWeight: 500 }}>{t.from.name}</span>
+                <ArrowRight size={13} style={{ color: C.mute }} />
+                <span style={{ fontSize: 13.5, fontWeight: 500 }}>{t.to.name}</span>
+                <span className="figure flex-1 text-right" style={{ fontSize: 14, fontWeight: 600, color: C.brass }}>{M(t.amount, cfg.cur)}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       <Btn tone="ghost" full onClick={backHome}><RotateCcw size={14} className="inline -mt-0.5 mr-1.5" /> {L.newTable}</Btn>

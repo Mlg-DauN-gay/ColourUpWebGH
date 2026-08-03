@@ -9,6 +9,7 @@ import { simplify } from "@/lib/settle";
 import { useAppData } from "@/lib/useAppData";
 import { useGameData } from "@/lib/useGameData";
 import { Chip, Dot } from "@/components/atoms";
+import StepRail from "@/components/StepRail";
 import PotRail from "@/components/PotRail";
 import LedgerPanel from "@/components/LedgerPanel";
 import PlayHome from "@/components/PlayHome";
@@ -22,6 +23,7 @@ import Settle from "@/components/Settle";
 import Done from "@/components/Done";
 import ProfileTab from "@/components/ProfileTab";
 import JoinSheet from "@/components/JoinSheet";
+import Intro from "@/components/Intro";
 
 export default function ColourUpPage() {
   return (
@@ -70,6 +72,18 @@ function ColourUpApp() {
   const [showLog, setShowLog] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [pendingLobby, setPendingLobby] = useState(false); // "Open lobby" was clicked signed out — finish once signed in
+  const [lastCfg, setLastCfg] = useState(null); // last-hosted stake, for PlayHome's one-tap re-host — read client-side only, to avoid a hydration mismatch
+  useEffect(() => { (async () => { setLastCfg(lastHostedCfg()); })(); }, []);
+  const [showIntro, setShowIntro] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try { if (!localStorage.getItem("cu_seen_intro")) setShowIntro(true); } catch { /* private mode etc. — just skip the explainer */ }
+    })();
+  }, []);
+  function dismissIntro() {
+    setShowIntro(false);
+    try { localStorage.setItem("cu_seen_intro", "1"); } catch { /* not load-bearing */ }
+  }
 
   useEffect(() => {
     if (!started) return;
@@ -119,9 +133,19 @@ function ColourUpApp() {
   const hhmm = `${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor(elapsed / 60) % 60).padStart(2, "0")}`;
   const gameLive = ["lobby", "fund", "live", "cashout", "reconcile", "settle"].includes(gp);
 
+  // Faster path: the stake/title from the last table you actually opened,
+  // remembered across sessions so a repeat game night doesn't start from
+  // scratch. `startHost(true)` (the PlayHome "Re-host" shortcut) applies it
+  // explicitly; an ordinary "Host a table" tap still picks it up as the
+  // sensible default, just without the explicit re-host framing.
+  function lastHostedCfg() {
+    if (typeof window === "undefined") return null;
+    try { return JSON.parse(localStorage.getItem("cu_last_cfg") || "null"); } catch { return null; }
+  }
   function startHost() {
     setPlayers([]);
-    setCfg(c => ({ ...c, cur: profile.currency, scan: null, chips: c.buyIn }));
+    const last = lastHostedCfg();
+    setCfg(c => ({ ...c, ...(last || {}), cur: last?.cur || profile.currency, scan: null, chips: last?.chips ?? c.buyIn }));
     setLog([]); setStarted(null); setElapsed(0);
     setGp("setup"); setResumeGp(null); setPendingLobby(false); setTab("play");
     setHistorySaved(false);
@@ -143,6 +167,9 @@ function ColourUpApp() {
       setGp("lobby");
       setTab("play");
       mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString()));
+      try {
+        localStorage.setItem("cu_last_cfg", JSON.stringify({ title: cfg.title, cur: cfg.cur, buyIn: cfg.buyIn, chips: cfg.chips, maxRebuys: cfg.maxRebuys }));
+      } catch { /* localStorage unavailable (private mode etc.) — not load-bearing */ }
       // Puts the game id in the URL the same way a guest's join link does
       // (see app/join/[code]/JoinClient.jsx) — without this, a host who
       // refreshes (or whose tab reloads in the background, an ordinary
@@ -476,7 +503,8 @@ function ColourUpApp() {
 
           <div className="px-5">
             {tab === "play" ? (<>
-              {gp === "home" && <PlayHome {...{ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab }} />}
+              <StepRail gp={gp} />
+              {gp === "home" && <PlayHome {...{ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab, lastCfg, M, openIntro: () => setShowIntro(true) }} />}
               {gp === "setup" && <Setup {...{ cfg, setCfg, players, openLobby, mkLog }} />}
               {gp === "lobby" && (staleLobby ? (
                 <div className="text-center py-16 space-y-2">
@@ -508,6 +536,7 @@ function ColourUpApp() {
         </div>
 
         {joinSheet && <JoinSheet onClose={() => setJoinSheet(false)} />}
+        {showIntro && <Intro onClose={dismissIntro} />}
       </div>
     </Lang.Provider>
   );
