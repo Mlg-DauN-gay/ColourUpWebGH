@@ -13,15 +13,17 @@ or moves money. That constraint is non-negotiable and applies to every future
 milestone too.
 
 - **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH — **working copy is
-  `~/ColourUpWebGH`, on branch `claude/launch-app-yb9vqz`** (not yet merged/
-  PR'd into `main`; `main` is still M1-only). A second, older, now-orphaned
-  clone exists at `~/Desktop/ColourUp website` (still on `main`, missing M2)
-  — that directory caused real confusion in one session (dev server was
-  running from `~/ColourUpWebGH`, edits were made in the Desktop copy,
-  nothing matched until this was noticed). **Don't use the Desktop copy** —
-  either delete it or treat `~/ColourUpWebGH` as the only real one.
+  `~/ColourUpWebGH`, on `main`** (both M2 PRs are merged; the old
+  `claude/launch-app-yb9vqz` branch has served its purpose and can be
+  deleted). A second, older, orphaned clone still exists at
+  `~/Desktop/ColourUp website` (stale, missing everything past M1) — that
+  directory caused real confusion in one earlier session. **Don't use the
+  Desktop copy** — either delete it or treat `~/ColourUpWebGH` as the only
+  real one.
 - **Stack**: Next.js 16 (App Router, JS/JSX — not TypeScript), Tailwind CSS, lucide-react, Supabase (Postgres + Auth)
-- **Not yet deployed anywhere** — only runs locally via `npm run dev`. No hosting provider chosen yet.
+- **Deployed**: https://colour-up-web-gh.vercel.app (Vercel, Hobby/free tier,
+  auto-deploys from `main`). See "Deployment" section below for what's
+  configured and what's still manual.
 
 ## ⚠️ Read this before writing any code
 
@@ -534,17 +536,46 @@ change, re-verify the full flow it sits inside, not just the specific
 scenario the change targeted** — tightening one policy can silently break
 a different policy that queries the same table internally.
 
-Before extending further: confirm scope with the user rather than
-assuming, especially anywhere the original spec's assumptions (solo mode,
-always-visible nav chrome) might resurface. The user iterates fast and
-corrects architecture choices directly — expect to adjust mid-flight
-rather than plan everything upfront.
+## Deployment
 
-**Deployment**: still nothing actually deployed. Vercel was recommended
-(natural fit for Next.js, generous free Hobby tier, no issue with
-Supabase Realtime since the browser talks to Supabase directly) but the
-user hasn't connected the repo to a Vercel account yet — that step needs
-their account, not a session running against this repo.
+**Live at https://colour-up-web-gh.vercel.app**, deployed on Vercel's free
+Hobby tier, auto-deploying from `main` on every push. Set up and verified
+end-to-end (sign-up → confirm-email → login → real multiplayer lobby, all
+against the same production Supabase project already used for local dev
+— there's only one Supabase project, no separate prod/dev split yet).
+
+What's configured:
+- Vercel env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+  `ANTHROPIC_API_KEY` deliberately **not** set — the user doesn't have one
+  yet, so the chip-photo scanner falls back to manual entry in production
+  too, same as it already did locally. Add it later (both in Vercel's
+  project settings and locally in `.env.local`) whenever that feature is
+  wanted; remember to also set a spend cap in the Anthropic console at
+  that point (flagged since Milestone 4, still not done since there's no
+  key at all yet).
+- Supabase Auth URL configuration: Site URL and a redirect URL entry both
+  updated to the production domain (`.../auth/callback`), alongside the
+  existing `localhost:3000` entries — local dev still works unchanged.
+- **"Confirm email" is now ON** (was deliberately off during earlier local
+  testing — see the M1 section above). Verified live: signing up now
+  requires clicking a real confirmation link before the account works,
+  and Supabase actively rejects non-deliverable addresses (e.g.
+  `@example.com`) at signup time. This closes the "anyone can register
+  with an email they don't own" gap flagged since Milestone 1.
+
+What's still manual / not done:
+- **No custom domain** — user doesn't own one yet, explicitly deferred.
+  Still on the free `.vercel.app` subdomain, which is fine for now.
+- **No custom SMTP (e.g. Resend)** — also explicitly deferred, same
+  reason (no domain to send from yet). Auth emails go through Supabase's
+  own built-in sender, which is rate-limited but sufficient for a small
+  friends-and-family user base. Revisit if signup volume ever grows or a
+  domain gets bought.
+- **No error tracking (Sentry) or uptime monitoring** — mentioned as
+  optional/nice-to-have, not set up.
+- Reconnect/offline handling (a dropped Realtime channel mid-game has no
+  resync logic yet) is still the top real-world risk flagged for anyone
+  actually relying on this at a live poker night — see the M6 items above.
 
 ---
 
