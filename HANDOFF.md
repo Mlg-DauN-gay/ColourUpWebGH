@@ -365,7 +365,17 @@ the rest triaged into "What's next" below:
    seat) goes through a new `lookup_game_by_code()` SECURITY DEFINER
    function instead — still requires the exact 6-character code, no
    listing. `JoinClient.jsx` and `useGameData.js`'s `joinGame()` both
-   updated to call it instead of a raw table select.
+   updated to call it instead of a raw table select. **Follow-up**: the
+   new policy's raw subquery into `game_players` immediately hit the same
+   cross-table version of the recursion bug from the M2-slice-1 section
+   above (`games`' policy queries `game_players`, whose policy queries
+   `games` right back) — fixed in
+   `0007_fix_games_policy_recursion.sql` by routing it through the
+   existing `is_seated_in_game()` helper instead. Verified after the fix:
+   a fresh anonymous session with no seat gets an empty list (not an
+   error) from a raw `games` select, can still look up a known game by
+   its exact code via the RPC, and a real host can still see every game
+   they've hosted.
 2. **`/api/vision` had zero auth, rate limiting, or payload validation**,
    and is reachable while fully signed out (Setup, where the scanner
    lives, is deliberately browsable with no account — see M1 notes above
