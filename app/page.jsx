@@ -140,10 +140,16 @@ function ColourUpApp() {
 
   async function finishOpenLobby() {
     try {
-      await gameData.createGame(cfg, profile);
+      const created = await gameData.createGame(cfg, profile);
       setGp("lobby");
       setTab("play");
       mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString()));
+      // Puts the game id in the URL the same way a guest's join link does
+      // (see app/join/[code]/JoinClient.jsx) — without this, a host who
+      // refreshes (or whose tab reloads in the background, an ordinary
+      // mobile event) lands back on Home with zero memory of the table
+      // they just opened, and no way back into it.
+      router.replace(`/?game=${created.id}`);
     } catch (err) {
       mkLog(L.openTableFailed(err.message));
     }
@@ -242,13 +248,13 @@ function ColourUpApp() {
     })();
   }, [gp, gameData.game?.phase, mkLog, L.cardsUp]);
 
-  function release() {
+  async function release() {
     const host = players.find(p => p.host);
     const hostNet = nets.find(n => n.id === host?.id)?.net ?? 0;
-    setHistory(h => [{ id: "h" + Date.now(), title: cfg.title, date: Date.now(), cur: cfg.cur, meNet: hostNet, players: players.length, duration: elapsed }, ...h]);
+    const { error } = await setHistory(h => [{ id: "h" + Date.now(), title: cfg.title, date: Date.now(), cur: cfg.cur, meNet: hostNet, players: players.length, duration: elapsed }, ...h]);
     setGp("done");
     mkLog(L.settledReceiptLog(L.transferN(transfers.length)));
-    mkLog(L.savedLog);
+    mkLog(error ? L.saveHistoryFailedLog : L.savedLog);
   }
   function backHome() {
     setGp("home"); setResumeGp(null); setPendingLobby(false); setPlayers([]); setStarted(null); setElapsed(0); setLog([]);

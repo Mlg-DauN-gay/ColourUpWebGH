@@ -35,12 +35,13 @@ export default function JoinClient({ code }) {
         if (signInErr) { if (!cancelled) { setError(signInErr.message); setPhase("error"); } return; }
       }
       const { data: { user } } = await supabase.auth.getUser();
-      const { data: gameRow, error: gErr } = await supabase
-        .from("games").select("id,code,title,currency,buy_in,chips,phase")
-        .eq("code", code.toUpperCase()).maybeSingle();
+      // RPC, not a raw table select: the games SELECT policy only covers
+      // the host and already-seated players (a guest has no seat yet at
+      // this point) — see supabase/migrations/0006_fix_games_enumeration.sql.
+      const { data: gameRow, error: gErr } = await supabase.rpc("lookup_game_by_code", { p_code: code });
       if (cancelled) return;
       if (gErr) { setError(gErr.message); setPhase("error"); return; }
-      if (!gameRow) { setPhase("notfound"); return; }
+      if (!gameRow || !gameRow.id) { setPhase("notfound"); return; }
       if (gameRow.phase !== "lobby") { setGame(gameRow); setPhase("started"); return; }
       setGame(gameRow);
       const { data: profileRow } = await supabase.from("profiles").select("display_name,color").eq("id", user.id).maybeSingle();

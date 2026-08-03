@@ -347,6 +347,55 @@ host-only recount-lock RPC from the original Milestone 3 spec (below) —
 called out there as security-critical, so it deserves its own careful
 pass rather than a rushed copy of this fix's pattern.
 
+### A full functional audit surfaced four more real issues, now fixed
+
+Requested explicitly ("check the whole app, think what is missing") and
+run as a background agent against this codebase + HANDOFF for context.
+Full report isn't reproduced here; these four were acted on immediately,
+the rest triaged into "What's next" below:
+
+1. **`games` table let any signed-in session — including a free,
+   self-created anonymous one — list every open table in the whole
+   project**, not just the one they had a code for (`using (true)` on the
+   SELECT policy can't distinguish "I know this row's code" from "give me
+   every row"). Fixed in
+   `supabase/migrations/0006_fix_games_enumeration.sql`: the policy now
+   only covers the host and already-seated players; the one remaining
+   legitimate case (a guest looking a game up by code before they have a
+   seat) goes through a new `lookup_game_by_code()` SECURITY DEFINER
+   function instead — still requires the exact 6-character code, no
+   listing. `JoinClient.jsx` and `useGameData.js`'s `joinGame()` both
+   updated to call it instead of a raw table select.
+2. **`/api/vision` had zero auth, rate limiting, or payload validation**,
+   and is reachable while fully signed out (Setup, where the scanner
+   lives, is deliberately browsable with no account — see M1 notes above
+   — so requiring a session here would have silently broken that).
+   Instead added: per-IP rate limiting (in-memory token bucket, 8
+   req/min — swap for Upstash Redis per the original spec if this ever
+   scales past one instance), a payload size cap, and a media-type
+   allowlist. **Still needs a manual step**: set a hard monthly spend cap
+   on the Anthropic API key in the Anthropic console — that's an
+   account-level setting no amount of code can enforce.
+3. **`setFriends`/`setHistory` silently swallowed Supabase errors** —
+   same bug class as `setProfile` (fixed earlier this file), just not
+   caught by that fix. A failed friend-add or history-save showed a false
+   "saved!" and, worse, could duplicate on retry since the failed item
+   was never marked "known" and got re-inserted next call. Both now
+   return `{ error }`; `FriendsTab.jsx` shows it and no longer marks a
+   failed add as added, and `release()` in `app/page.jsx` logs a distinct
+   "couldn't save to history" line instead of a blanket "saved" when the
+   Supabase write fails (the receipt itself is unaffected either way).
+4. **A host who refreshed (or whose tab reloaded in the background, an
+   ordinary mobile event) lost all memory of the table they'd just
+   opened** — `finishOpenLobby()` never put the game id anywhere
+   persistent (guests get it for free via `/join/[code]`'s redirect, but
+   nothing did the equivalent for the host). Fixed by having
+   `finishOpenLobby()` call `router.replace('/?game='+id)` right after
+   creating the game, same as the guest path — the existing
+   `urlGameId`-pickup effect in `app/page.jsx` already handled the rest
+   generically. Verified live: hosted a table, hard-refreshed, landed
+   back in the same lobby instead of Home.
+
 ## What's next
 
 The user gave a **7-milestone roadmap** (verbatim, appended below) for
