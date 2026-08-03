@@ -12,9 +12,18 @@ transfers needed to square everyone up. It never charges cards, holds funds,
 or moves money. That constraint is non-negotiable and applies to every future
 milestone too.
 
-- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH (branch `main`, working tree clean as of this handoff)
+- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH — **working copy is
+  `~/ColourUpWebGH`, on `main`** (both M2 PRs are merged; the old
+  `claude/launch-app-yb9vqz` branch has served its purpose and can be
+  deleted). A second, older, orphaned clone still exists at
+  `~/Desktop/ColourUp website` (stale, missing everything past M1) — that
+  directory caused real confusion in one earlier session. **Don't use the
+  Desktop copy** — either delete it or treat `~/ColourUpWebGH` as the only
+  real one.
 - **Stack**: Next.js 16 (App Router, JS/JSX — not TypeScript), Tailwind CSS, lucide-react, Supabase (Postgres + Auth)
-- **Not yet deployed anywhere** — only runs locally via `npm run dev`. No hosting provider chosen yet.
+- **Deployed**: https://colour-up-web-gh.vercel.app (Vercel, Hobby/free tier,
+  auto-deploys from `main`). See "Deployment" section below for what's
+  configured and what's still manual.
 
 ## ⚠️ Read this before writing any code
 
@@ -151,26 +160,422 @@ Then `npm run lint` and `npm run build` should both be clean (one pre-existing
 table → Setup (no login needed) → Open lobby (triggers sign-up) → create
 profile → should land directly in the lobby, not stranded on profile.
 
+## Milestone 2, slice 1 — real lobby multiplayer (done this session)
+
+The single-device "device switcher" simulation is gone. There's now a real
+hosted lobby: the host creates an actual `games` row, guests join via a
+real `/join/<code>` link, and the Lobby screen syncs live via Supabase
+Realtime across devices. **Fund through Settle/Done are still local state**
+this slice, deliberately — see "What's next" below for the follow-up.
+
+- **Auth model** (explicit user decision, overriding the original spec's
+  anonymous-sign-in idea without discussion): guests join the lobby with
+  **no account at all** — they sign in anonymously
+  (`supabase.auth.signInAnonymously()`, already enabled in the dashboard)
+  the moment they open a join link, which gives them a real `auth.uid()`
+  so all existing RLS patterns work unchanged. They're only asked to
+  create a real account (email+password) at the **Fund** step, via
+  `supabase.auth.updateUser({email,password})` — this **upgrades the same
+  anonymous session in place** (same `auth.uid()` before/after), so their
+  seat/entries rows never need migrating. This is a distinct mechanism
+  from `AuthGate`'s `signUp`, which would create a new user and orphan the
+  guest's seat — don't conflate the two if extending this later.
+- **New schema**: `supabase/migrations/0002_multiplayer.sql` adds `games`,
+  `game_players`, `entries`, `ledger`, plus a host-only `advance_phase()`
+  RPC (SECURITY INVOKER — relies on RLS, not elevated privilege) and
+  enables Realtime replication on `games`/`game_players`. **This migration
+  has not been run against the live Supabase project** — do that via the
+  SQL Editor before testing any of this for real. `entries`/`ledger` ship
+  with correct ownership RLS now but have zero callers yet (see below).
+- **New hook**: `lib/useGameData.js` — mirrors `useAppData.js`'s
+  conventions, owns the real `games`/`game_players` state + Realtime
+  subscription, exposes `createGame`/`joinGame`/`agree`/`advancePhase`.
+- **Real join flow**: `app/join/[code]/page.jsx` is now a thin wrapper
+  around `app/join/[code]/JoinClient.jsx`, which does the anonymous
+  sign-in → game lookup → seat form → insert → redirect to `/?game=<id>`.
+  The old static "type this code in manually" stub is gone.
+- **The Lobby → Fund hand-off**: the moment the host advances the phase
+  (or a guest observes it via Realtime), the real `game_players` rows are
+  copied into the existing local `players` array (same ids), so
+  Fund/Live/Cashout/Reconcile/Settle/Done run **completely unchanged** —
+  see `handleLobbyBecameFund()` in `app/page.jsx`.
+- **Removed**: the bottom device-switcher pill bar, `simulateJoin()`, and
+  Lobby's "Simulate join" button — real joins replace all of it. No
+  dev-flag fallback was kept (explicit user choice).
+- **Known, deliberate gaps** (not oversights — see the migration's and
+  `app/page.jsx`'s comments for detail): no leave-lobby/cancel-table
+  action yet (an abandoned lobby just sits at `phase='lobby'` forever);
+  refreshing mid-Fund-through-Settle loses local state (only the Lobby
+  phase is actually persisted this slice — `app/page.jsx` shows a
+  "table already in progress" message rather than silently misrendering
+  in that case); `components/JoinSheet.jsx` (manual code-entry sheet)
+  is still the old non-functional stub.
+
+### Bugs found + fixed getting this slice working against the real project
+
+Two different sessions independently hit and fixed overlapping problems
+here — recorded together since the full picture only makes sense combined:
+
+1. **`game_players`'s roster SELECT policy caused infinite recursion**
+   (Postgres `42P17`, surfaced by PostgREST as a bare `500`). It checked
+   "are you already seated here" by querying `game_players` from within
+   `game_players`'s own policy — Postgres refuses that outright regardless
+   of whether it would actually terminate. Two equivalent fixes exist in
+   history for this: an in-place edit to `0002_multiplayer.sql` (commit
+   `3698870`, helper function `public.is_game_member()`) and a separate
+   migration, `supabase/migrations/0004_fix_game_players_recursion.sql`
+   (helper function `public.is_seated_in_game()`). Both route the
+   self-check through a `SECURITY DEFINER` function instead of a direct
+   correlated subquery on the same table — **that's the pattern to reuse
+   for any future policy needing "does the caller already have a row in
+   this same table" logic.** Only one needs to actually be live in the
+   database at a time; whichever was run last in the SQL editor wins, and
+   this was re-verified working after `0004` was applied.
+2. **Separately, `game_players`'s INSERT policy never actually took effect
+   live** — a real host could write their own seat, but the identical
+   insert as an anonymous guest (the actual join-a-table path) came back
+   `42501 new row violates row-level security policy`. Schema/indexes/
+   function/realtime from 0002 were all fine (those statements are
+   idempotent); only the non-idempotent `create policy` statements were
+   affected, most likely a partial/aborted SQL-editor run. Fixed by
+   `supabase/migrations/0003_reapply_m2_policies.sql`, which re-applies
+   every policy from 0002 with `drop policy if exists` guards — safe to
+   re-run any time this class of bug is suspected again.
+
+**Confirmed working end-to-end**, verified two different ways: (a) a real
+user walking through sign-up → profile → Open lobby → real `games`/
+`game_players` rows → Lobby screen loading correctly; (b) directly against
+the live Supabase REST API with a fresh anonymous-sign-in token per
+simulated guest (look up game by code → insert a seat → read the roster
+back), then confirmed those inserted seats appeared live in a real
+browser's lobby via Realtime with no refresh. Note for future sessions:
+**a single browser's tabs all share one cookie jar/session**, so they
+can't simulate two independent guests — either use two real
+browsers/devices, or fake independent guests via curl + a fresh
+`POST {SUPABASE_URL}/auth/v1/signup` with an empty body per guest (gets
+back a real anonymous JWT you can use directly against `/rest/v1/...`).
+
+One unrelated real gotcha hit along the way: **don't paste long secrets
+(JWTs, API keys) through a chat UI into a terminal and trust it landed
+intact** — one user's system silently mangled part of a pasted anon key
+(likely a password manager's clipboard/secret redaction swapping
+characters mid-token), producing a confusing browser error (`Failed to
+execute 'fetch': ... non ISO-8859-1 code point`) that had nothing to do
+with the app code. Diagnosed via
+`python3 -c "open('.env.local','rb').read().decode('ascii')"` (throws with
+the exact byte position if there's a hidden non-ASCII character) — worth
+doing that check early if a fresh session hits a similarly weird
+fetch/header error right after credentials are pasted in.
+
+Also fixed in passing (unrelated to the RLS bugs, found while
+investigating): `setProfile` in `lib/useAppData.js` silently swallowed
+Supabase errors — if a profile save failed for any reason, the user was
+bounced back to the profile display with zero feedback, looking exactly
+like an unexplained "stuck" bug. It now returns `{ error }`, and
+`ProfileTab.jsx` shows it.
+
+### Not yet confirmed — pick this up next
+
+A two-browser test (host + guest joining via the real link) hit an issue
+on the **Fund/buy-in screen** — described only as "it bugs out," not yet
+diagnosed, and not re-attempted since (the RLS work above was the
+blocker being chased at the time). What's known: it happened after the
+host had successfully advanced the phase and both the host's own seat
+("a") and a guest seat ("B") were visible on the buy-in screen, each
+correctly showing "UNPAID." Whatever went wrong after that (screenshots
+suggested it may have dropped back to the Home screen unexpectedly) was
+never pinned down — no browser-console screenshot exists at the actual
+moment of failure. **First thing to do next session**: reproduce it with
+DevTools Console open on both windows and grab a screenshot right at the
+failure, since without that this is just a guess. Plausible starting
+hypotheses given the architecture (not verified): something in
+`handleLobbyBecameFund()` firing twice (once from the host's explicit
+`onStart` call, once from the guest's Realtime-watching effect) racing
+with a subsequent state update; or the guest's Fund-phase
+anonymous-upgrade gate interacting oddly with a stale `session`
+reference. Don't assume either without the console output.
+
+### Root cause found + fixed: Fund phase now syncs for real
+
+The "bugs out" report above was diagnosed, not by reading code, but by
+literally simulating two independent devices: one real browser as the
+host, and a second identity driven straight against the Supabase REST API
+with its own fresh anonymous-sign-in token (a single browser's tabs all
+share one cookie jar, so they can't stand in for two real devices — see
+the note on this earlier in this file, under the M2-slice-1 RLS section).
+
+The actual bug: Fund ran entirely on each device's own local `players`
+`useState`, seeded once at the lobby hand-off and never touched again. A
+buy-in recorded on one phone was invisible to every other phone —
+`allFunded` could never become true on a device that didn't personally
+witness every buy-in, so the game could get stuck forever on "waiting for
+a buy-in" that had, in fact, already happened elsewhere. The host's "Deal"
+button made it worse: it only ever called local `setGp("live")`, with no
+gating (not even host-only) and no broadcast, so it could never actually
+move every device into Live together even once funding looked complete.
+
+**Fixed** (`supabase/migrations/0005_sync_fund_phase.sql`,
+`lib/useGameData.js`, `app/page.jsx`, `components/Fund.jsx`):
+- `entries` (already existed with correct RLS from 0002, just wasn't in
+  the realtime publication) now syncs live the same way `game_players`
+  does — `useGameData` fetches it, subscribes to `INSERT`s, and exposes
+  `recordEntry()`/`allFunded` computed from the real rows.
+- `app/page.jsx` keeps local `players[].entries` in sync with
+  `gameData.entries` via an effect scoped to the fund/live phases only —
+  deliberately not touching `chips`/`submitted`/`approved`/`out`, which
+  are still local-only past this point (see the task below).
+- `advance_phase()` now supports `fund -> live` (previously only
+  `lobby -> fund`), gated on every seated player having at least one
+  `entries` row — same "friendly error in front of the real RLS
+  boundary" shape as the existing transition.
+- The "Deal" button is now host-only (calls `advancePhase("live")`
+  through the RPC); guests see a "waiting for the host" message and pick
+  up the transition automatically via a Realtime-watching effect, the
+  same pattern already proven for lobby -> fund.
+
+**Verified live**, not just by reading the diff: hosted a real table in a
+real browser, joined + agreed + bought in as a guest purely via curl with
+a fresh anonymous token, and watched the guest's buy-in and the
+fund -> live transition both appear on the host's screen with zero page
+reload. Then confirmed directly against the database (as the guest's own
+session) that `games.phase` had actually flipped to `'live'` — proving a
+real guest device would auto-follow via the same effect, not just the
+host's own screen updating.
+
+**Deliberately not touched this pass**: Cashout, Reconcile, Settle, and
+Done are still 100% local-only, same architecture gap Fund just had. That
+needs `player_counts`/`transfers` tables plus the count-privacy RLS and
+host-only recount-lock RPC from the original Milestone 3 spec (below) —
+called out there as security-critical, so it deserves its own careful
+pass rather than a rushed copy of this fix's pattern.
+
+### A full functional audit surfaced four more real issues, now fixed
+
+Requested explicitly ("check the whole app, think what is missing") and
+run as a background agent against this codebase + HANDOFF for context.
+Full report isn't reproduced here; these four were acted on immediately,
+the rest triaged into "What's next" below:
+
+1. **`games` table let any signed-in session — including a free,
+   self-created anonymous one — list every open table in the whole
+   project**, not just the one they had a code for (`using (true)` on the
+   SELECT policy can't distinguish "I know this row's code" from "give me
+   every row"). Fixed in
+   `supabase/migrations/0006_fix_games_enumeration.sql`: the policy now
+   only covers the host and already-seated players; the one remaining
+   legitimate case (a guest looking a game up by code before they have a
+   seat) goes through a new `lookup_game_by_code()` SECURITY DEFINER
+   function instead — still requires the exact 6-character code, no
+   listing. `JoinClient.jsx` and `useGameData.js`'s `joinGame()` both
+   updated to call it instead of a raw table select. **Follow-up**: the
+   new policy's raw subquery into `game_players` immediately hit the same
+   cross-table version of the recursion bug from the M2-slice-1 section
+   above (`games`' policy queries `game_players`, whose policy queries
+   `games` right back) — fixed in
+   `0007_fix_games_policy_recursion.sql` by routing it through the
+   existing `is_seated_in_game()` helper instead. Verified after the fix:
+   a fresh anonymous session with no seat gets an empty list (not an
+   error) from a raw `games` select, can still look up a known game by
+   its exact code via the RPC, and a real host can still see every game
+   they've hosted.
+2. **`/api/vision` had zero auth, rate limiting, or payload validation**,
+   and is reachable while fully signed out (Setup, where the scanner
+   lives, is deliberately browsable with no account — see M1 notes above
+   — so requiring a session here would have silently broken that).
+   Instead added: per-IP rate limiting (in-memory token bucket, 8
+   req/min — swap for Upstash Redis per the original spec if this ever
+   scales past one instance), a payload size cap, and a media-type
+   allowlist. **Still needs a manual step**: set a hard monthly spend cap
+   on the Anthropic API key in the Anthropic console — that's an
+   account-level setting no amount of code can enforce.
+3. **`setFriends`/`setHistory` silently swallowed Supabase errors** —
+   same bug class as `setProfile` (fixed earlier this file), just not
+   caught by that fix. A failed friend-add or history-save showed a false
+   "saved!" and, worse, could duplicate on retry since the failed item
+   was never marked "known" and got re-inserted next call. Both now
+   return `{ error }`; `FriendsTab.jsx` shows it and no longer marks a
+   failed add as added, and `release()` in `app/page.jsx` logs a distinct
+   "couldn't save to history" line instead of a blanket "saved" when the
+   Supabase write fails (the receipt itself is unaffected either way).
+4. **A host who refreshed (or whose tab reloaded in the background, an
+   ordinary mobile event) lost all memory of the table they'd just
+   opened** — `finishOpenLobby()` never put the game id anywhere
+   persistent (guests get it for free via `/join/[code]`'s redirect, but
+   nothing did the equivalent for the host). Fixed by having
+   `finishOpenLobby()` call `router.replace('/?game='+id)` right after
+   creating the game, same as the guest path — the existing
+   `urlGameId`-pickup effect in `app/page.jsx` already handled the rest
+   generically. Verified live: hosted a table, hard-refreshed, landed
+   back in the same lobby instead of Home.
+
+## Milestone 2 slice 2 + Milestone 3 — Cashout through Done, with real count privacy (done this session)
+
+The other big local-only gap flagged after the Fund fix — Cashout,
+Reconcile, Settle, and Done ran on 100% per-device React state, same
+deadlock shape Fund had (a submitted count, a sign-off, or a finished game
+on one phone was invisible to every other phone). This closes it, plus
+builds the integrity model the original spec's Milestone 3 calls
+security-critical: a player's chip count is readable by them always, but
+by no one else until every seat has locked a count and the game reaches
+settle/done.
+
+**Schema** (`supabase/migrations/0008_sync_cashout_through_done.sql`):
+- `game_players` gains `out`/`submitted`/`approved` (the original spec's
+  schema always listed these; only `agreed` had actually been built).
+  Plain self-reported booleans, publicly visible — not the sensitive part.
+- New `player_counts` table (`game_id`, `game_player_id`, `chips`) is the
+  sensitive part: SELECT policy is "your own row always; anyone else's
+  only once `games.phase` is `settle`/`done`"; INSERT-only, no UPDATE
+  policy at all — that's what makes "no one, including the host, can edit
+  a single player's number to force a balance" a real DB guarantee, not
+  just a UI convention. A recount deletes and re-inserts, it never edits.
+- `reconcile_totals(game_id)`: SECURITY DEFINER RPC returning only
+  `{counted, issued}` aggregates — lets any participant check balance
+  during cashout/reconcile without ever exposing a per-player figure.
+- `recount_lock(game_id)`: host-only SECURITY DEFINER RPC, all-or-nothing
+  — resets every `submitted` flag, deletes every count, drops the game
+  back to `cashout`. Only callable from `reconcile`.
+- `advance_phase()` extended with `live→cashout`, `cashout→reconcile`
+  (gated on everyone submitted), `reconcile→settle` (gated on the
+  aggregate actually balancing), `settle→done` (gated on everyone
+  approved) — same host-only, friendly-error-in-front-of-RLS shape as
+  `fund→live` already had.
+
+**Client** (`lib/useGameData.js`, `app/page.jsx`, and
+`components/{Live,Cashout,Reconcile,Settle}.jsx`): same sync pattern Fund
+established — local `players[]` stays mirrored from the real tables via
+an effect, each phase transition is a host-only action with a
+Realtime-driven pickup effect for everyone else. `Reconcile.jsx` needed
+an actual behavior change, not just rewiring: it used to list every
+player's raw chip count, which would now leak exactly what the RLS above
+exists to hide — it shows the aggregate (from `reconcile_totals()`) and a
+"counted" tag for other seats, revealing figures only once the game
+actually reaches `settle`. History-saving moved out of the host-only
+`release()` into a per-device effect keyed on `gp === "done"`, since
+every player needs their own net saved to their own history, not just
+whichever device happened to click finalize.
+
+**A real regression, found and fixed while verifying this**
+(`0009_fix_join_regression.sql`): tightening `games`' SELECT policy for
+the enumeration-leak fix (see above) broke `game_players`' own INSERT
+policy — its own internal check queries `games` via a raw subquery, which
+is itself subject to that now-tightened policy, and a first-time joiner
+is by definition not yet seated and not host, so the check failed for
+every real join. This is exactly the SECURITY DEFINER-bypass pattern used
+everywhere else in this file; it was missed for this one call site
+because the original enumeration fix was verified read-side only (could
+a stranger list games?) and never re-ran the actual join flow afterward.
+**Lesson for next time: after any RLS policy change, re-run the full
+join-a-table flow end-to-end, not just the specific query the change was
+about** — a tightened SELECT policy can silently break an unrelated
+INSERT/UPDATE policy that queries the same table internally.
+
+**Verified two ways**, not just by reading the diff:
+1. Directly against the live database with two independent real sessions
+   (host + a fresh anonymous session) scripted through the full
+   lobby→fund→live→cashout→reconcile→settle→done lifecycle via curl,
+   confirming at each step: a non-owner's `player_counts` read returns
+   empty during cashout/reconcile and both rows once settle starts; a
+   genuine mismatch blocks `reconcile→settle`; a non-host's `recount_lock`
+   call is rejected; the host's succeeds and correctly resets
+   submitted/counts and drops the phase back to `cashout`.
+2. The identical flow driven through the real browser UI (host) with a
+   curl-simulated guest, confirming the screens themselves respect the
+   same privacy boundary — the guest's roster row shows "COUNTED" with no
+   number during cashout/reconcile, the real figure only appearing once
+   Settle renders — and that the aggregate "counted / issued" bar on
+   `PotRail` (also re-sourced from `reconcile_totals()`, since it has the
+   same leak risk the Reconcile screen had) updates live and correctly
+   through every phase, ending on a correctly-populated final receipt.
+
+**Deliberately not done this pass**: `ledger` (the append-only game-event
+log table from 0002) still has zero callers — Lobby/Fund/Live events stay
+in each device's local, single-device-visible `log` only. `transfers`
+from the original spec's schema was skipped entirely: once `settle`
+widens `player_counts` visibility to everyone, every device can
+deterministically recompute the same `nets`/`transfers` client-side from
+`entries` + `player_counts` (the existing `simplify()` function, unchanged),
+so persisting a separate table added no correctness benefit for this pass.
+
 ## What's next
 
 The user gave a **7-milestone roadmap** (verbatim, appended below) for
 turning this from a single-device simulation into a real multiplayer app.
-**Milestone 1 is done but was substantially reworked from that spec** per
-the deviations above — carry those forward into M2+ rather than reverting to
-what the original M1 bullets describe (e.g. don't reintroduce anonymous
-sign-in for the QR-join flow without checking with the user first, since
-that directly conflicts with the "email + password only" decision).
+**Milestone 1 is done but was substantially reworked from that spec**,
+and **Milestone 2 and the core of Milestone 3 are now done** — every game
+phase (lobby through done) runs on real, Realtime-synced Supabase state
+with the count-privacy and recount-lock guarantees Milestone 3 calls
+security-critical (see the section above). The whole
+lobby→fund→live→cashout→reconcile→settle→done lifecycle has been verified
+end-to-end, both via direct database calls with two independent real
+sessions and by driving the actual browser UI.
 
-Before starting Milestone 2, given the pattern this session established:
-confirm scope with the user rather than assuming, especially anywhere the
-original spec's assumptions (anonymous sign-in, solo mode, always-visible
-nav chrome) might resurface. The user iterates fast and corrects
-architecture choices directly — expect to adjust mid-flight rather than
-plan everything upfront.
+What's genuinely left from the original spec, roughly in priority order:
+- **The `ledger` table has zero callers.** Every phase's event log
+  (`mkLog`) is still purely local, single-device-visible. Wiring it up is
+  low-risk (append-only, RLS already correct from 0002) but real work —
+  every `mkLog(...)` call site across `app/page.jsx` would need an
+  accompanying `ledger` insert, and the Ledger panel UI would need to read
+  from the real table instead of local `log` state.
+- **M6 items**: exact-cent money math (settlement currently uses plain
+  floats with epsilon thresholds, not integer minor units +
+  largest-remainder distribution), reconnect/offline handling for a
+  dropped Realtime channel, the reconciliation escape hatch after repeated
+  failed recounts, host rake/tip, mid-game buy-ins.
+- **M7 items**: onboarding cards, an accessibility pass (most icon-only
+  buttons still have no `aria-label`), a privacy page, data export/delete.
+- **PWA/installable + offline** — no manifest or service worker exist yet.
 
-Also worth raising proactively early in the next session: **where will this
-actually be hosted?** No deployment target has been chosen. Vercel is the
-natural fit for Next.js but hasn't been discussed.
+Before extending further: confirm scope with the user rather than
+assuming, especially anywhere the original spec's assumptions (solo mode,
+always-visible nav chrome) might resurface. The user iterates fast and
+corrects architecture choices directly — expect to adjust mid-flight
+rather than plan everything upfront. Also worth internalizing the lesson
+from this session's regression (see above): **after any RLS policy
+change, re-verify the full flow it sits inside, not just the specific
+scenario the change targeted** — tightening one policy can silently break
+a different policy that queries the same table internally.
+
+## Deployment
+
+**Live at https://colour-up-web-gh.vercel.app**, deployed on Vercel's free
+Hobby tier, auto-deploying from `main` on every push. Set up and verified
+end-to-end (sign-up → confirm-email → login → real multiplayer lobby, all
+against the same production Supabase project already used for local dev
+— there's only one Supabase project, no separate prod/dev split yet).
+
+What's configured:
+- Vercel env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+  `ANTHROPIC_API_KEY` deliberately **not** set — the user doesn't have one
+  yet, so the chip-photo scanner falls back to manual entry in production
+  too, same as it already did locally. Add it later (both in Vercel's
+  project settings and locally in `.env.local`) whenever that feature is
+  wanted; remember to also set a spend cap in the Anthropic console at
+  that point (flagged since Milestone 4, still not done since there's no
+  key at all yet).
+- Supabase Auth URL configuration: Site URL and a redirect URL entry both
+  updated to the production domain (`.../auth/callback`), alongside the
+  existing `localhost:3000` entries — local dev still works unchanged.
+- **"Confirm email" is now ON** (was deliberately off during earlier local
+  testing — see the M1 section above). Verified live: signing up now
+  requires clicking a real confirmation link before the account works,
+  and Supabase actively rejects non-deliverable addresses (e.g.
+  `@example.com`) at signup time. This closes the "anyone can register
+  with an email they don't own" gap flagged since Milestone 1.
+
+What's still manual / not done:
+- **No custom domain** — user doesn't own one yet, explicitly deferred.
+  Still on the free `.vercel.app` subdomain, which is fine for now.
+- **No custom SMTP (e.g. Resend)** — also explicitly deferred, same
+  reason (no domain to send from yet). Auth emails go through Supabase's
+  own built-in sender, which is rate-limited but sufficient for a small
+  friends-and-family user base. Revisit if signup volume ever grows or a
+  domain gets bought.
+- **No error tracking (Sentry) or uptime monitoring** — mentioned as
+  optional/nice-to-have, not set up.
+- Reconnect/offline handling (a dropped Realtime channel mid-game has no
+  resync logic yet) is still the top real-world risk flagged for anyone
+  actually relying on this at a live poker night — see the M6 items above.
 
 ---
 

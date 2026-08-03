@@ -1,11 +1,13 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { Clock, Eye, Languages, ScrollText, User } from "lucide-react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Clock, Languages, ScrollText, User } from "lucide-react";
 import { C, PALETTE, THEME, themeVars } from "@/lib/themes";
 import { DICT, money } from "@/lib/i18n";
 import { Lang } from "@/lib/LangContext";
 import { simplify } from "@/lib/settle";
 import { useAppData } from "@/lib/useAppData";
+import { useGameData } from "@/lib/useGameData";
 import { Chip, Dot } from "@/components/atoms";
 import PotRail from "@/components/PotRail";
 import LedgerPanel from "@/components/LedgerPanel";
@@ -21,9 +23,19 @@ import Done from "@/components/Done";
 import ProfileTab from "@/components/ProfileTab";
 import JoinSheet from "@/components/JoinSheet";
 
-const genCode = () => Array.from({ length: 6 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("");
-
 export default function ColourUpPage() {
+  return (
+    <Suspense fallback={<div style={{ background: THEME.ink, minHeight: "100vh", display: "grid", placeItems: "center" }}><Chip size={36} color={THEME.gold} /></div>}>
+      <ColourUpApp />
+    </Suspense>
+  );
+}
+
+function ColourUpApp() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlGameId = searchParams.get("game");
+
   const [lang, setLang] = useState("en");
   const L = DICT[lang];
   const M = (n, cur) => money(n, cur, lang);
@@ -36,19 +48,24 @@ export default function ColourUpPage() {
   // always live in Supabase once signed in (lib/useAppData.js).
   const {
     session, authReady, dataReady, userEmail,
-    signUp, signIn, signInWithGoogle, requestPasswordReset, updatePassword, signOut,
+    signUp, signIn, signInWithGoogle, requestPasswordReset, updatePassword, signOut, upgradeAnonymousAccount,
     profile, setProfile, friends, setFriends, history, setHistory,
   } = useAppData();
+
+  // Real multiplayer lobby (games/game_players, synced via Realtime). Fund
+  // through Done still run on the local `players` array below, seeded from
+  // this hook's `seats` the moment the host advances past lobby — see
+  // handleLobbyBecameFund.
+  const gameData = useGameData(session);
 
   // game engine
   const [gp, setGp] = useState("home"); // home | setup | lobby | fund | live | cashout | reconcile | settle | done
   const [resumeGp, setResumeGp] = useState(null); // phase to jump back to from the "Resume table" banner
   const [cfg, setCfg] = useState({ title: DICT.en.thu, cur: profile.currency, buyIn: 5000, chips: 5000, scan: null, maxRebuys: 3 });
   const [players, setPlayers] = useState([]);
-  const [me, setMe] = useState("p0");
+  const [me, setMe] = useState(null);
   const [log, setLog] = useState([]);
   const [started, setStarted] = useState(null);
-  const [lobbyCode, setLobbyCode] = useState("");
   const [joinSheet, setJoinSheet] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -61,23 +78,36 @@ export default function ColourUpPage() {
   }, [started]);
   useEffect(() => { document.body.style.background = t.ink; }, [t.ink]);
 
+  // A guest arriving from /join/[code] lands here with ?game=<id> — pick up
+  // that game and drop into its (real) lobby.
+  useEffect(() => {
+    if (urlGameId && !gameData.gameId) {
+      (async () => { gameData.setGameId(urlGameId); setGp("lobby"); setTab("play"); })();
+    }
+  }, [urlGameId, gameData]);
+
   function mkLog(text) { setLog(l => [{ t: new Date(), text }, ...l]); }
   function mk(name, i, host = false, color) {
     return { id: "p" + i + "_" + Math.random().toString(36).slice(2, 6), name, color: color || PALETTE[i % PALETTE.length], host, agreed: false, entries: [], chips: null, submitted: false, approved: false, out: false };
   }
   const upd = (id, patch) => setPlayers(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
+  function addSeatNamed(name, color) { setPlayers(ps => [...ps, mk(name, ps.length, false, color)]); }
 
   const rate = cfg.chips / cfg.buyIn;
   const inAll = players.reduce((s, p) => s + p.entries.reduce((a, e) => a + e.amount, 0), 0);
   const chipsOut = players.reduce((s, p) => s + p.entries.reduce((a, e) => a + e.chips, 0), 0);
-  const counted = players.reduce((s, p) => s + (p.chips ?? 0), 0);
-  const drift = counted - chipsOut;
-  const allAgreed = players.length > 0 && players.every(p => p.agreed);
   const allFunded = players.length > 0 && players.every(p => p.entries.length > 0);
   const allSubmitted = players.length > 0 && players.every(p => p.submitted);
   const allApproved = players.length > 0 && players.every(p => p.approved);
   const viewer = players.find(p => p.id === me) || players[0];
   const isHost = viewer?.host;
+
+  // Real-lobby-derived config (host's actual configured stake), used while
+  // gp === "lobby" — a guest's local `cfg` is never synced from the host,
+  // so falling back to it would show the wrong buy-in/chip amounts.
+  const lobbyCfg = gameData.game
+    ? { title: gameData.game.title, cur: gameData.game.currency, buyIn: Number(gameData.game.buy_in), chips: Number(gameData.game.chips), maxRebuys: gameData.game.max_rebuys, scan: null }
+    : cfg;
 
   const nets = useMemo(() => players.map(p => {
     const put = p.entries.reduce((a, e) => a + e.amount, 0);
@@ -90,10 +120,11 @@ export default function ColourUpPage() {
   const gameLive = ["lobby", "fund", "live", "cashout", "reconcile", "settle"].includes(gp);
 
   function startHost() {
-    const host = mk(profile.name, 0, true, profile.color); host.id = "p0";
-    setPlayers([host]);
-    setMe("p0"); setCfg(c => ({ ...c, cur: profile.currency, scan: null, chips: c.buyIn })); setLog([]); setStarted(null); setElapsed(0);
-    setLobbyCode(genCode()); setGp("setup"); setResumeGp(null); setPendingLobby(false); setTab("play");
+    setPlayers([]);
+    setCfg(c => ({ ...c, cur: profile.currency, scan: null, chips: c.buyIn }));
+    setLog([]); setStarted(null); setElapsed(0);
+    setGp("setup"); setResumeGp(null); setPendingLobby(false); setTab("play");
+    setHistorySaved(false);
   }
 
   // The header logo — standard "tap the logo to go home" — but a live game
@@ -106,11 +137,21 @@ export default function ColourUpPage() {
   }
   function resumeTable() { if (resumeGp) setGp(resumeGp); }
 
-  function finishOpenLobby() {
-    upd("p0", { name: profile.name, color: profile.color });
-    setGp("lobby");
-    setTab("play");
-    mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString()));
+  async function finishOpenLobby() {
+    try {
+      const created = await gameData.createGame(cfg, profile);
+      setGp("lobby");
+      setTab("play");
+      mkLog(L.tableOpened(M(cfg.buyIn, cfg.cur), cfg.chips.toLocaleString()));
+      // Puts the game id in the URL the same way a guest's join link does
+      // (see app/join/[code]/JoinClient.jsx) — without this, a host who
+      // refreshes (or whose tab reloads in the background, an ordinary
+      // mobile event) lands back on Home with zero memory of the table
+      // they just opened, and no way back into it.
+      router.replace(`/?game=${created.id}`);
+    } catch (err) {
+      mkLog(L.openTableFailed(err.message));
+    }
   }
 
   // The stake/chip setup can be explored freely, but opening the lobby is
@@ -127,35 +168,254 @@ export default function ColourUpPage() {
 
   useEffect(() => {
     if (pendingLobby && session && dataReady && profile.registered) {
-      (async () => { setPendingLobby(false); finishOpenLobby(); })();
+      (async () => { setPendingLobby(false); await finishOpenLobby(); })();
     }
   }, [pendingLobby, session, dataReady, profile.registered, finishOpenLobby]);
 
-  function addSeatNamed(name, color) { setPlayers(ps => [...ps, mk(name, ps.length, false, color)]); }
-  function simulateJoin() {
-    const seatedNames = new Set(players.map(p => p.name));
-    const pool = friends.filter(f => !seatedNames.has(f.name));
-    const g = pool[0];
-    const p = mk(g ? g.name : "Guest", players.length, false, g ? g.color : undefined);
-    setPlayers(ps => [...ps, p]);
-    mkLog(L.joinedLog(p.name));
+  // The Lobby -> Fund hand-off: the real game_players seats become the local
+  // `players` array (same ids). Entries (buy-ins/re-buys) are real too as of
+  // this slice — seeded from whatever's already in gameData.entries (a late
+  // joiner or a refresh mid-fund can land here after some buy-ins already
+  // happened) and kept live by the sync effect below. Live through
+  // Done still run unchanged on local-only state past this point.
+  function handleLobbyBecameFund() {
+    setPlayers(gameData.seats.map(s => ({
+      id: s.id, name: s.name, color: s.color, host: s.host, agreed: s.agreed,
+      entries: gameData.entries.filter(e => e.gamePlayerId === s.id),
+      chips: null, submitted: false, approved: false, out: false,
+    })));
+    setMe(gameData.viewer?.id ?? null);
+    setGp("fund");
   }
 
-  function recordEntry(pid, amount, reason) {
+  async function startFunding() {
+    try {
+      await gameData.advancePhase("fund");
+      handleLobbyBecameFund();
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+
+  // Fires for guests the instant the host advances the game's phase —
+  // Realtime updates gameData.game, this picks it up and seeds local state.
+  useEffect(() => {
+    if (gp === "lobby" && gameData.game?.phase === "fund") {
+      (async () => { handleLobbyBecameFund(); })();
+    }
+  }, [gp, gameData.game?.phase, handleLobbyBecameFund]);
+
+  // Keeps every device's view of buy-ins, cash-outs, submitted counts, and
+  // sign-offs in sync with the real tables (Realtime-pushed) from Fund
+  // through Done — this is the fix for the game getting stuck on an action
+  // that already happened on someone else's phone, the same class of bug
+  // Fund had before entries was wired up. `chips` comes from
+  // gameData.playerCounts, which RLS deliberately empties out for every
+  // seat but your own until the game reaches settle/done — that's what
+  // keeps counts private during cashout/reconcile without this effect (or
+  // anything else client-side) having to enforce it.
+  useEffect(() => {
+    if (!["fund", "live", "cashout", "reconcile", "settle", "done"].includes(gp)) return;
+    (async () => {
+      setPlayers(ps => ps.map(p => {
+        const seat = gameData.seats.find(s => s.id === p.id);
+        const count = gameData.playerCounts.find(c => c.gamePlayerId === p.id);
+        return {
+          ...p,
+          entries: gameData.entries.filter(e => e.gamePlayerId === p.id),
+          out: seat?.out ?? p.out,
+          submitted: seat?.submitted ?? p.submitted,
+          approved: seat?.approved ?? p.approved,
+          // null for every seat but your own until the game reaches
+          // settle/done, when RLS widens what player_counts hands back —
+          // the UI already treats "submitted but chips is null" as
+          // "counted, hidden" (see Cashout.jsx's roster list).
+          chips: count ? count.chips : null,
+        };
+      }));
+    })();
+  }, [gameData.entries, gameData.seats, gameData.playerCounts, gp]);
+
+  async function recordEntry(pid, amount, reason) {
     const p = players.find(x => x.id === pid);
-    upd(pid, { entries: [...p.entries, { amount, chips: amount * rate, at: Date.now(), kind: reason }] });
-    mkLog(L.recordedLog(p.name, reason === "buy-in" ? L.buyinReason : L.rebuyReason, M(amount, cfg.cur)));
+    try {
+      await gameData.recordEntry(pid, amount, amount * rate, reason);
+      mkLog(L.recordedLog(p.name, reason === "buy-in" ? L.buyinReason : L.rebuyReason, M(amount, cfg.cur)));
+    } catch (err) {
+      mkLog(err.message);
+    }
   }
 
-  function release() {
-    const host = players.find(p => p.host);
-    const hostNet = nets.find(n => n.id === host?.id)?.net ?? 0;
-    setHistory(h => [{ id: "h" + Date.now(), title: cfg.title, date: Date.now(), cur: cfg.cur, meNet: hostNet, players: players.length, duration: elapsed }, ...h]);
-    setGp("done");
-    mkLog(L.settledReceiptLog(L.transferN(transfers.length)));
-    mkLog(L.savedLog);
+  // Host-only, mirrors startFunding's shape: advance the real game row
+  // (RPC checks everyone's funded), then move the host's own screen; guests
+  // pick this up via the effect right below, exactly like lobby->fund.
+  async function startLive() {
+    try {
+      await gameData.advancePhase("live");
+      setGp("live"); setStarted(Date.now()); mkLog(L.cardsUp);
+    } catch (err) {
+      mkLog(err.message);
+    }
   }
-  function backHome() { setGp("home"); setResumeGp(null); setPendingLobby(false); setPlayers([]); setStarted(null); setElapsed(0); setLog([]); }
+
+  useEffect(() => {
+    if (gp !== "fund" || gameData.game?.phase !== "live") return;
+    (async () => {
+      setGp("live"); setStarted(Date.now()); mkLog(L.cardsUp);
+    })();
+  }, [gp, gameData.game?.phase, mkLog, L.cardsUp]);
+
+  // Cash-out-early is a plain own-row flag (see migration 0008) — no
+  // phase transition involved, so no advancePhase/pickup-effect pair
+  // needed, just the write.
+  async function markOut() {
+    try {
+      await gameData.setSeatFlag(viewer.id, { out: true });
+      mkLog(L.cashingEarly(viewer.name));
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+
+  // Host-only, same shape as startLive: advance the real game row, then
+  // move the host's own screen; guests pick it up via the effect below.
+  async function startCashout() {
+    try {
+      await gameData.advancePhase("cashout");
+      setGp("cashout");
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "live" || gameData.game?.phase !== "cashout") return;
+    (async () => { setGp("cashout"); })();
+  }, [gp, gameData.game?.phase]);
+
+  // Locks in the viewer's own stack — see migration 0008's comment on why
+  // this is two writes (the count itself, access-controlled; the
+  // "counted" flag, plain and visible to everyone).
+  async function lockStack(chips) {
+    try {
+      await gameData.submitCount(viewer.id, chips);
+      mkLog(L.countedLog(viewer.name, chips.toLocaleString()));
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+
+  async function startReconcile() {
+    try {
+      await gameData.advancePhase("reconcile");
+      setGp("reconcile");
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "cashout" || gameData.game?.phase !== "reconcile") return;
+    (async () => { setGp("reconcile"); })();
+  }, [gp, gameData.game?.phase]);
+
+  // The balance check (and PotRail's live "counted / issued" bar) has to
+  // come from the aggregate-only RPC, not from summing local
+  // `players[].chips` — most of those are null here (RLS hides every seat
+  // but your own until settle), by design. Re-fetches on every
+  // `gameData.seats` change during cashout since a seat's `submitted` flag
+  // flipping (plain, publicly visible) is the only signal a client gets
+  // that the aggregate might have moved; reconcile itself needs just the
+  // one entry-fetch, since cashout->reconcile is already gated on every
+  // seat having submitted, so the totals can't change again until either
+  // a recount (back to cashout) or settle.
+  const [totals, setTotals] = useState({ counted: 0, issued: 0 });
+  useEffect(() => {
+    if (gp !== "cashout" && gp !== "reconcile") return;
+    (async () => {
+      try { setTotals(await gameData.reconcileTotals()); } catch { /* surfaced via gameData.error */ }
+    })();
+  }, [gp, gameData.seats, gameData]);
+
+  async function startSettle() {
+    try {
+      await gameData.advancePhase("settle");
+      setGp("settle");
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "reconcile" || gameData.game?.phase !== "settle") return;
+    (async () => { setGp("settle"); })();
+  }, [gp, gameData.game?.phase]);
+
+  // Host-only, all-or-nothing reset — see migration 0008. Every device
+  // (host included) picks up the phase dropping back to `cashout` via the
+  // same effect startCashout's guests use, since it's the identical
+  // signal (games.phase changed to 'cashout' while gp is somewhere past
+  // it) — that's why there's no separate "recount" pickup effect here.
+  async function recount() {
+    try {
+      await gameData.recountLock();
+      setGp("cashout");
+      mkLog(L.recountLog);
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "reconcile" || gameData.game?.phase !== "cashout") return;
+    (async () => { setGp("cashout"); mkLog(L.recountLog); })();
+  }, [gp, gameData.game?.phase, mkLog, L.recountLog]);
+
+  async function approve() {
+    try {
+      await gameData.setSeatFlag(viewer.id, { approved: true });
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+
+  // Host-only finalize: advances the real game row (RPC checks everyone's
+  // signed off), then moves the host's own screen; guests pick it up via
+  // the effect below. History-saving moved out of here — see the
+  // gp === "done" effect further down — because every device needs to
+  // save its *own* net, not just whichever device happened to click
+  // finalize.
+  async function release() {
+    try {
+      await gameData.advancePhase("done");
+      setGp("done");
+      mkLog(L.settledReceiptLog(L.transferN(transfers.length)));
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "settle" || gameData.game?.phase !== "done") return;
+    (async () => { setGp("done"); mkLog(L.settledReceiptLog(L.transferN(transfers.length))); })();
+  }, [gp, gameData.game?.phase, mkLog, L, transfers.length]);
+
+  // Every device saves its own net to its own history once the table is
+  // actually done — not just the host's, and not just whichever device
+  // called release(). Guarded so a re-render (or coming back to an
+  // already-done game) doesn't save a duplicate entry.
+  const [historySaved, setHistorySaved] = useState(false);
+  useEffect(() => {
+    if (gp !== "done" || historySaved || !viewer) return;
+    (async () => {
+      setHistorySaved(true);
+      const myNet = nets.find(n => n.id === viewer.id)?.net ?? 0;
+      const { error } = await setHistory(h => [{ id: "h" + Date.now(), title: cfg.title, date: Date.now(), cur: cfg.cur, meNet: myNet, players: players.length, duration: elapsed }, ...h]);
+      mkLog(error ? L.saveHistoryFailedLog : L.savedLog);
+    })();
+  }, [gp, historySaved, viewer, nets, cfg.title, cfg.cur, players.length, elapsed, setHistory, mkLog, L.saveHistoryFailedLog, L.savedLog]);
+
+  function backHome() {
+    setGp("home"); setResumeGp(null); setPendingLobby(false); setPlayers([]); setStarted(null); setElapsed(0); setLog([]);
+    setHistorySaved(false);
+    gameData.leaveGame();
+    router.replace("/");
+  }
 
   const ctx = { L, lang, M };
 
@@ -169,12 +429,15 @@ export default function ColourUpPage() {
     );
   }
 
-  const showDeviceSwitcher = tab === "play" && gameLive && players.length > 0;
+  // Only Lobby is real this slice — if a device lands here after the game
+  // has moved past fund (e.g. a stale/late join link, or a refresh deep
+  // into the game), there's no persisted local state to resume into.
+  const staleLobby = gp === "lobby" && gameData.game && !["lobby", "fund"].includes(gameData.game.phase);
 
   return (
     <Lang.Provider value={ctx}>
       <div style={{ ...themeVars(t), background: C.ink, minHeight: "100vh", color: C.ivory }}>
-        <div className="mx-auto body" style={{ maxWidth: 460, paddingBottom: showDeviceSwitcher ? 90 : 24 }}>
+        <div className="mx-auto body" style={{ maxWidth: 460, paddingBottom: 24 }}>
           {/* header */}
           <div className="flex items-center justify-between px-5 pt-6 pb-4">
             <button onClick={goHome} className="flex items-center gap-2" aria-label="Home">
@@ -200,19 +463,38 @@ export default function ColourUpPage() {
             </div>
           </div>
 
-          {tab === "play" && (["cashout", "reconcile", "settle", "done"].includes(gp) || inAll > 0) && <PotRail {...{ inAll, chipsOut, counted, gp, cfg, drift }} />}
+          {/* cashout/reconcile: counted from the aggregate-only RPC, since
+              individual chips are still RLS-hidden then. settle/done: RLS has
+              revealed everyone's, so the local sum (already correct) is fine
+              and avoids an extra fetch. */}
+          {tab === "play" && (["cashout", "reconcile", "settle", "done"].includes(gp) || inAll > 0) && <PotRail {...{
+            inAll, chipsOut, gp, cfg,
+            counted: (gp === "settle" || gp === "done") ? players.reduce((s, p) => s + (p.chips ?? 0), 0) : totals.counted,
+            drift: (gp === "settle" || gp === "done") ? players.reduce((s, p) => s + (p.chips ?? 0), 0) - chipsOut : totals.counted - totals.issued,
+          }} />}
           {showLog && <LedgerPanel log={log} />}
 
           <div className="px-5">
             {tab === "play" ? (<>
               {gp === "home" && <PlayHome {...{ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab }} />}
               {gp === "setup" && <Setup {...{ cfg, setCfg, players, openLobby, mkLog }} />}
-              {gp === "lobby" && <Lobby {...{ cfg, players, viewer, upd, allAgreed, setGp, mkLog, lobbyCode, simulateJoin }} />}
-              {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, setGp, setStarted, mkLog }} />}
-              {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, upd, mkLog, setGp }} />}
-              {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, upd, rate, allSubmitted, setGp, mkLog }} />}
-              {gp === "reconcile" && <Reconcile {...{ players, upd, drift, chipsOut, counted, setGp, mkLog }} />}
-              {gp === "settle" && <Settle {...{ cfg, nets, transfers, players, viewer, upd, allApproved, release }} />}
+              {gp === "lobby" && (staleLobby ? (
+                <div className="text-center py-16 space-y-2">
+                  <div className="disp" style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-.02em" }}>{L.alreadyStarted}</div>
+                </div>
+              ) : (
+                <Lobby {...{
+                  cfg: lobbyCfg, players: gameData.seats, viewer: gameData.viewer, isHost: gameData.isHost,
+                  allAgreed: gameData.allAgreed, onAgree: () => gameData.agree(true),
+                  onDecline: () => mkLog(L.declinedLog(gameData.viewer?.name)),
+                  onStart: startFunding, mkLog, lobbyCode: gameData.game?.code || "",
+                }} />
+              ))}
+              {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount }} />}
+              {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, markOut, startCashout }} />}
+              {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, isHost, rate, allSubmitted, lockStack, startReconcile }} />}
+              {gp === "reconcile" && <Reconcile {...{ players, viewer, isHost, totals, startSettle, recount }} />}
+              {gp === "settle" && <Settle {...{ cfg, nets, transfers, players, viewer, isHost, approve, allApproved, release }} />}
               {gp === "done" && <Done {...{ cfg, nets, transfers, elapsed, backHome, players }} />}
             </>) : (
               <ProfileTab key={dataReady ? "ready" : "loading"} {...{
@@ -223,20 +505,6 @@ export default function ColourUpPage() {
               }} />
             )}
           </div>
-
-          {/* device switcher during a live game */}
-          {showDeviceSwitcher && (
-            <div className="fixed left-0 right-0 mx-auto" style={{ maxWidth: 460, bottom: 16 }}>
-              <div className="mx-4 px-3 py-2 rounded-2xl flex items-center gap-2 overflow-x-auto" style={{ background: C.raise + "ee", border: `1px solid ${C.line}`, backdropFilter: "blur(12px)" }}>
-                <Eye size={13} style={{ color: C.mute, flexShrink: 0 }} />
-                {players.map(p => (
-                  <button key={p.id} onClick={() => setMe(p.id)} className="shrink-0 px-2 py-1 rounded-full flex items-center gap-1.5" style={{ background: me === p.id ? p.color + "22" : "transparent", border: `1px solid ${me === p.id ? p.color : "transparent"}` }}>
-                    <Dot p={p} size={18} /><span style={{ fontSize: 11, fontWeight: 600, color: me === p.id ? C.ivory : C.mute }}>{p.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {joinSheet && <JoinSheet onClose={() => setJoinSheet(false)} />}

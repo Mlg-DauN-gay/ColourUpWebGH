@@ -1,17 +1,23 @@
 "use client";
 import { useState } from "react";
-import { Check, Copy, Sparkles } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { C } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
-import { Btn, Dot, Eyebrow, Row } from "./atoms";
+import { Btn, Chip, Dot, Eyebrow, Row } from "./atoms";
 import QRCode from "./QRCode";
 
-export default function Lobby({ cfg, players, viewer, upd, allAgreed, setGp, mkLog, lobbyCode, simulateJoin }) {
+export default function Lobby({ cfg, players, viewer, isHost, allAgreed, onAgree, onDecline, onStart, mkLog, lobbyCode }) {
   const { L, M } = useL();
   const [copied, setCopied] = useState(false);
+  const [agreeing, setAgreeing] = useState(false);
   const link = typeof window !== "undefined"
     ? `${window.location.origin}/join/${lobbyCode}`
     : `https://colour-up.app/join/${lobbyCode}`;
+
+  if (!viewer) {
+    return <div className="flex justify-center py-16"><Chip size={32} color={C.gold} /></div>;
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -36,9 +42,6 @@ export default function Lobby({ cfg, players, viewer, upd, allAgreed, setGp, mkL
             </button>
           </div>
         </div>
-        <button onClick={simulateJoin} className="w-full mt-3 py-2 rounded-lg flex items-center justify-center gap-1.5" style={{ background: C.raise, border: `1px dashed ${C.line}`, fontSize: 11.5, color: C.mute }}>
-          <Sparkles size={12} style={{ color: C.brass }} /> {L.simJoin}
-        </button>
       </div>
 
       <div className="space-y-2">
@@ -55,12 +58,14 @@ export default function Lobby({ cfg, players, viewer, upd, allAgreed, setGp, mkL
         <div className="p-4 rounded-2xl space-y-3" style={{ background: C.raise, border: `1px solid ${C.brassSoft}` }}>
           <div style={{ fontSize: 13.5 }}><span style={{ color: C.mute }}>{L.onPhone(viewer.name)}</span> {L.agreeQ(M(cfg.buyIn, cfg.cur))}</div>
           <div className="flex gap-2">
-            <Btn full onClick={() => { upd(viewer.id, { agreed: true }); mkLog(L.agreedLog(viewer.name, M(cfg.buyIn, cfg.cur))); }}>{L.agree}</Btn>
-            <Btn tone="danger" onClick={() => mkLog(L.declinedLog(viewer.name))}>{L.decline}</Btn>
+            <Btn full disabled={agreeing} onClick={async () => { setAgreeing(true); await onAgree(); mkLog(L.agreedLog(viewer.name, M(cfg.buyIn, cfg.cur))); setAgreeing(false); }}>{L.agree}</Btn>
+            <Btn tone="danger" onClick={onDecline}>{L.decline}</Btn>
           </div>
         </div>
+      ) : isHost ? (
+        <Btn full disabled={!allAgreed || players.length < 2} onClick={onStart}>{players.length < 2 ? L.waitingSeats(1) : allAgreed ? L.takeBuyins : L.waitingSeats(players.filter(p => !p.agreed).length)}</Btn>
       ) : (
-        <Btn full disabled={!allAgreed || players.length < 2} onClick={() => setGp("fund")}>{players.length < 2 ? L.waitingSeats(1) : allAgreed ? L.takeBuyins : L.waitingSeats(players.filter(p => !p.agreed).length)}</Btn>
+        <div className="mono text-center" style={{ fontSize: 11.5, color: C.mute }}>{L.waitingForHost}</div>
       )}
     </div>
   );

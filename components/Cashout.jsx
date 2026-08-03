@@ -9,7 +9,7 @@ import { Btn, Chip, Dot, Eyebrow, Row } from "./atoms";
 
 // Rendered with `key={viewer.id}` by the parent so this local input state
 // resets naturally whenever the device switcher picks a different viewer.
-export default function Cashout({ cfg, players, viewer, upd, rate, allSubmitted, setGp, mkLog }) {
+export default function Cashout({ cfg, players, viewer, isHost, rate, allSubmitted, lockStack, startReconcile }) {
   const { L, M } = useL();
   const [byDenom, setByDenom] = useState(false);
   const [counts, setCounts] = useState({});
@@ -70,18 +70,20 @@ export default function Cashout({ cfg, players, viewer, upd, rate, allSubmitted,
             <input type="number" autoFocus value={quick} placeholder="0" onChange={e => setQuick(e.target.value)} className="bg-transparent outline-none w-full mono" style={{ fontSize: 38, fontWeight: 600, color: C.ivory, borderBottom: `1px solid ${C.line}`, paddingBottom: 6 }} />
           )}
           <div className="flex items-baseline justify-between"><span className="mono" style={{ fontSize: 11, color: C.mute }}>{value.toLocaleString()} {L.chipsWord}</span><span className="disp" style={{ fontSize: 20, fontWeight: 800 }}>{M(value / rate, cfg.cur)}</span></div>
-          <Btn full disabled={!byDenom && String(quick).trim() === ""} onClick={() => { upd(viewer.id, { chips: value, submitted: true }); mkLog(L.countedLog(viewer.name, value.toLocaleString())); }}>{L.lockStack}</Btn>
+          <Btn full disabled={!byDenom && String(quick).trim() === ""} onClick={() => lockStack(value)}>{L.lockStack}</Btn>
         </div>
       )}
       <div className="space-y-2">
         {players.map(p => (
           <Row key={p.id}>
             <Dot p={p} /><span className="flex-1" style={{ fontSize: 14, fontWeight: 500 }}>{p.name}</span>
-            {p.submitted ? <span className="mono flex items-center gap-1.5" style={{ fontSize: 11, color: C.win }}><Check size={12} />{p.id === viewer.id ? p.chips.toLocaleString() : L.countedTag}</span> : <span className="mono" style={{ fontSize: 10.5, color: C.mute }}>{L.countingTag}</span>}
+            {p.submitted ? <span className="mono flex items-center gap-1.5" style={{ fontSize: 11, color: C.win }}><Check size={12} />{p.id === viewer.id ? (p.chips ?? 0).toLocaleString() : L.countedTag}</span> : <span className="mono" style={{ fontSize: 10.5, color: C.mute }}>{L.countingTag}</span>}
           </Row>
         ))}
       </div>
-      <Btn full disabled={!allSubmitted} onClick={() => setGp("reconcile")}>{allSubmitted ? L.checkBooks : L.waitingStacks(players.filter(p => !p.submitted).length)}</Btn>
+      {isHost
+        ? <Btn full disabled={!allSubmitted} onClick={startReconcile}>{allSubmitted ? L.checkBooks : L.waitingStacks(players.filter(p => !p.submitted).length)}</Btn>
+        : <div className="mono text-center" style={{ fontSize: 11, color: C.mute }}>{allSubmitted ? L.waitingForHost : L.waitingStacks(players.filter(p => !p.submitted).length)}</div>}
     </div>
   );
 }

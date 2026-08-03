@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Check, Plus, User } from "lucide-react";
+import { AlertTriangle, Check, Plus, User } from "lucide-react";
 import { C, PALETTE } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
 import { Btn, Dot, Eyebrow, Row } from "./atoms";
@@ -9,12 +9,16 @@ export default function FriendsTab({ friends, setFriends, mkLog, gameLive, addSe
   const { L } = useL();
   const [handle, setHandle] = useState("");
   const [added, setAdded] = useState(null);
-  function add() {
+  const [addError, setAddError] = useState("");
+  async function add() {
     const h = handle.trim().replace(/^@?/, "@");
     if (h.length < 2) return;
     const name = h.slice(1).replace(/^\w/, c => c.toUpperCase());
     const f = { id: "f" + Date.now(), name, handle: h, color: PALETTE[friends.length % PALETTE.length], together: 0 };
-    setFriends(fs => [f, ...fs]); setHandle(""); setAdded(name); mkLog(L.friendAdded(name)); setTimeout(() => setAdded(null), 1600);
+    setAddError("");
+    const { error } = await setFriends(fs => [f, ...fs]);
+    if (error) { setAddError(L.friendAddError); return; }
+    setHandle(""); setAdded(name); mkLog(L.friendAdded(name)); setTimeout(() => setAdded(null), 1600);
   }
   return (
     <div className="space-y-6">
@@ -28,6 +32,7 @@ export default function FriendsTab({ friends, setFriends, mkLog, gameLive, addSe
           <Btn small onClick={add} disabled={handle.trim().length < 2}>{L.add}</Btn>
         </div>
         {added && <div className="mono mt-2 flex items-center gap-1" style={{ fontSize: 11, color: C.win }}><Check size={12} /> {L.friendAdded(added)}</div>}
+        {addError && <div className="mono mt-2 flex items-center gap-1" style={{ fontSize: 11, color: C.lose }}><AlertTriangle size={12} /> {addError}</div>}
       </div>
 
       <div className="space-y-2">
