@@ -96,8 +96,6 @@ function ColourUpApp() {
   const rate = cfg.chips / cfg.buyIn;
   const inAll = players.reduce((s, p) => s + p.entries.reduce((a, e) => a + e.amount, 0), 0);
   const chipsOut = players.reduce((s, p) => s + p.entries.reduce((a, e) => a + e.chips, 0), 0);
-  const counted = players.reduce((s, p) => s + (p.chips ?? 0), 0);
-  const drift = counted - chipsOut;
   const allFunded = players.length > 0 && players.every(p => p.entries.length > 0);
   const allSubmitted = players.length > 0 && players.every(p => p.submitted);
   const allApproved = players.length > 0 && players.every(p => p.approved);
@@ -126,6 +124,7 @@ function ColourUpApp() {
     setCfg(c => ({ ...c, cur: profile.currency, scan: null, chips: c.buyIn }));
     setLog([]); setStarted(null); setElapsed(0);
     setGp("setup"); setResumeGp(null); setPendingLobby(false); setTab("play");
+    setHistorySaved(false);
   }
 
   // The header logo — standard "tap the logo to go home" — but a live game
@@ -206,18 +205,36 @@ function ColourUpApp() {
     }
   }, [gp, gameData.game?.phase, handleLobbyBecameFund]);
 
-  // Keeps every device's view of who's paid in sync with the real `entries`
-  // table (Realtime-pushed) while funding is in progress — this is the fix
-  // for the game getting stuck on a buy-in that already happened on someone
-  // else's phone. Deliberately scoped to just the `entries` field so the
-  // rest of each player's local-only state (chips/submitted/approved/out,
-  // still unwired past this phase) is left untouched.
+  // Keeps every device's view of buy-ins, cash-outs, submitted counts, and
+  // sign-offs in sync with the real tables (Realtime-pushed) from Fund
+  // through Done — this is the fix for the game getting stuck on an action
+  // that already happened on someone else's phone, the same class of bug
+  // Fund had before entries was wired up. `chips` comes from
+  // gameData.playerCounts, which RLS deliberately empties out for every
+  // seat but your own until the game reaches settle/done — that's what
+  // keeps counts private during cashout/reconcile without this effect (or
+  // anything else client-side) having to enforce it.
   useEffect(() => {
-    if (gp !== "fund" && gp !== "live") return;
+    if (!["fund", "live", "cashout", "reconcile", "settle", "done"].includes(gp)) return;
     (async () => {
-      setPlayers(ps => ps.map(p => ({ ...p, entries: gameData.entries.filter(e => e.gamePlayerId === p.id) })));
+      setPlayers(ps => ps.map(p => {
+        const seat = gameData.seats.find(s => s.id === p.id);
+        const count = gameData.playerCounts.find(c => c.gamePlayerId === p.id);
+        return {
+          ...p,
+          entries: gameData.entries.filter(e => e.gamePlayerId === p.id),
+          out: seat?.out ?? p.out,
+          submitted: seat?.submitted ?? p.submitted,
+          approved: seat?.approved ?? p.approved,
+          // null for every seat but your own until the game reaches
+          // settle/done, when RLS widens what player_counts hands back —
+          // the UI already treats "submitted but chips is null" as
+          // "counted, hidden" (see Cashout.jsx's roster list).
+          chips: count ? count.chips : null,
+        };
+      }));
     })();
-  }, [gameData.entries, gp]);
+  }, [gameData.entries, gameData.seats, gameData.playerCounts, gp]);
 
   async function recordEntry(pid, amount, reason) {
     const p = players.find(x => x.id === pid);
@@ -248,16 +265,154 @@ function ColourUpApp() {
     })();
   }, [gp, gameData.game?.phase, mkLog, L.cardsUp]);
 
-  async function release() {
-    const host = players.find(p => p.host);
-    const hostNet = nets.find(n => n.id === host?.id)?.net ?? 0;
-    const { error } = await setHistory(h => [{ id: "h" + Date.now(), title: cfg.title, date: Date.now(), cur: cfg.cur, meNet: hostNet, players: players.length, duration: elapsed }, ...h]);
-    setGp("done");
-    mkLog(L.settledReceiptLog(L.transferN(transfers.length)));
-    mkLog(error ? L.saveHistoryFailedLog : L.savedLog);
+  // Cash-out-early is a plain own-row flag (see migration 0008) — no
+  // phase transition involved, so no advancePhase/pickup-effect pair
+  // needed, just the write.
+  async function markOut() {
+    try {
+      await gameData.setSeatFlag(viewer.id, { out: true });
+      mkLog(L.cashingEarly(viewer.name));
+    } catch (err) {
+      mkLog(err.message);
+    }
   }
+
+  // Host-only, same shape as startLive: advance the real game row, then
+  // move the host's own screen; guests pick it up via the effect below.
+  async function startCashout() {
+    try {
+      await gameData.advancePhase("cashout");
+      setGp("cashout");
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "live" || gameData.game?.phase !== "cashout") return;
+    (async () => { setGp("cashout"); })();
+  }, [gp, gameData.game?.phase]);
+
+  // Locks in the viewer's own stack — see migration 0008's comment on why
+  // this is two writes (the count itself, access-controlled; the
+  // "counted" flag, plain and visible to everyone).
+  async function lockStack(chips) {
+    try {
+      await gameData.submitCount(viewer.id, chips);
+      mkLog(L.countedLog(viewer.name, chips.toLocaleString()));
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+
+  async function startReconcile() {
+    try {
+      await gameData.advancePhase("reconcile");
+      setGp("reconcile");
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "cashout" || gameData.game?.phase !== "reconcile") return;
+    (async () => { setGp("reconcile"); })();
+  }, [gp, gameData.game?.phase]);
+
+  // The balance check (and PotRail's live "counted / issued" bar) has to
+  // come from the aggregate-only RPC, not from summing local
+  // `players[].chips` — most of those are null here (RLS hides every seat
+  // but your own until settle), by design. Re-fetches on every
+  // `gameData.seats` change during cashout since a seat's `submitted` flag
+  // flipping (plain, publicly visible) is the only signal a client gets
+  // that the aggregate might have moved; reconcile itself needs just the
+  // one entry-fetch, since cashout->reconcile is already gated on every
+  // seat having submitted, so the totals can't change again until either
+  // a recount (back to cashout) or settle.
+  const [totals, setTotals] = useState({ counted: 0, issued: 0 });
+  useEffect(() => {
+    if (gp !== "cashout" && gp !== "reconcile") return;
+    (async () => {
+      try { setTotals(await gameData.reconcileTotals()); } catch { /* surfaced via gameData.error */ }
+    })();
+  }, [gp, gameData.seats, gameData]);
+
+  async function startSettle() {
+    try {
+      await gameData.advancePhase("settle");
+      setGp("settle");
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "reconcile" || gameData.game?.phase !== "settle") return;
+    (async () => { setGp("settle"); })();
+  }, [gp, gameData.game?.phase]);
+
+  // Host-only, all-or-nothing reset — see migration 0008. Every device
+  // (host included) picks up the phase dropping back to `cashout` via the
+  // same effect startCashout's guests use, since it's the identical
+  // signal (games.phase changed to 'cashout' while gp is somewhere past
+  // it) — that's why there's no separate "recount" pickup effect here.
+  async function recount() {
+    try {
+      await gameData.recountLock();
+      setGp("cashout");
+      mkLog(L.recountLog);
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "reconcile" || gameData.game?.phase !== "cashout") return;
+    (async () => { setGp("cashout"); mkLog(L.recountLog); })();
+  }, [gp, gameData.game?.phase, mkLog, L.recountLog]);
+
+  async function approve() {
+    try {
+      await gameData.setSeatFlag(viewer.id, { approved: true });
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+
+  // Host-only finalize: advances the real game row (RPC checks everyone's
+  // signed off), then moves the host's own screen; guests pick it up via
+  // the effect below. History-saving moved out of here — see the
+  // gp === "done" effect further down — because every device needs to
+  // save its *own* net, not just whichever device happened to click
+  // finalize.
+  async function release() {
+    try {
+      await gameData.advancePhase("done");
+      setGp("done");
+      mkLog(L.settledReceiptLog(L.transferN(transfers.length)));
+    } catch (err) {
+      mkLog(err.message);
+    }
+  }
+  useEffect(() => {
+    if (gp !== "settle" || gameData.game?.phase !== "done") return;
+    (async () => { setGp("done"); mkLog(L.settledReceiptLog(L.transferN(transfers.length))); })();
+  }, [gp, gameData.game?.phase, mkLog, L, transfers.length]);
+
+  // Every device saves its own net to its own history once the table is
+  // actually done — not just the host's, and not just whichever device
+  // called release(). Guarded so a re-render (or coming back to an
+  // already-done game) doesn't save a duplicate entry.
+  const [historySaved, setHistorySaved] = useState(false);
+  useEffect(() => {
+    if (gp !== "done" || historySaved || !viewer) return;
+    (async () => {
+      setHistorySaved(true);
+      const myNet = nets.find(n => n.id === viewer.id)?.net ?? 0;
+      const { error } = await setHistory(h => [{ id: "h" + Date.now(), title: cfg.title, date: Date.now(), cur: cfg.cur, meNet: myNet, players: players.length, duration: elapsed }, ...h]);
+      mkLog(error ? L.saveHistoryFailedLog : L.savedLog);
+    })();
+  }, [gp, historySaved, viewer, nets, cfg.title, cfg.cur, players.length, elapsed, setHistory, mkLog, L.saveHistoryFailedLog, L.savedLog]);
+
   function backHome() {
     setGp("home"); setResumeGp(null); setPendingLobby(false); setPlayers([]); setStarted(null); setElapsed(0); setLog([]);
+    setHistorySaved(false);
     gameData.leaveGame();
     router.replace("/");
   }
@@ -308,7 +463,15 @@ function ColourUpApp() {
             </div>
           </div>
 
-          {tab === "play" && (["cashout", "reconcile", "settle", "done"].includes(gp) || inAll > 0) && <PotRail {...{ inAll, chipsOut, counted, gp, cfg, drift }} />}
+          {/* cashout/reconcile: counted from the aggregate-only RPC, since
+              individual chips are still RLS-hidden then. settle/done: RLS has
+              revealed everyone's, so the local sum (already correct) is fine
+              and avoids an extra fetch. */}
+          {tab === "play" && (["cashout", "reconcile", "settle", "done"].includes(gp) || inAll > 0) && <PotRail {...{
+            inAll, chipsOut, gp, cfg,
+            counted: (gp === "settle" || gp === "done") ? players.reduce((s, p) => s + (p.chips ?? 0), 0) : totals.counted,
+            drift: (gp === "settle" || gp === "done") ? players.reduce((s, p) => s + (p.chips ?? 0), 0) - chipsOut : totals.counted - totals.issued,
+          }} />}
           {showLog && <LedgerPanel log={log} />}
 
           <div className="px-5">
@@ -328,10 +491,10 @@ function ColourUpApp() {
                 }} />
               ))}
               {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount }} />}
-              {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, upd, mkLog, setGp }} />}
-              {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, upd, rate, allSubmitted, setGp, mkLog }} />}
-              {gp === "reconcile" && <Reconcile {...{ players, upd, drift, chipsOut, counted, setGp, mkLog }} />}
-              {gp === "settle" && <Settle {...{ cfg, nets, transfers, players, viewer, upd, allApproved, release }} />}
+              {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, markOut, startCashout }} />}
+              {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, isHost, rate, allSubmitted, lockStack, startReconcile }} />}
+              {gp === "reconcile" && <Reconcile {...{ players, viewer, isHost, totals, startSettle, recount }} />}
+              {gp === "settle" && <Settle {...{ cfg, nets, transfers, players, viewer, isHost, approve, allApproved, release }} />}
               {gp === "done" && <Done {...{ cfg, nets, transfers, elapsed, backHome, players }} />}
             </>) : (
               <ProfileTab key={dataReady ? "ready" : "loading"} {...{

@@ -4,7 +4,7 @@ import { C } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
 import { Btn, Dot, Eyebrow, Row } from "./atoms";
 
-export default function Live({ cfg, players, viewer, recordEntry, rate, isHost, upd, mkLog, setGp }) {
+export default function Live({ cfg, players, viewer, recordEntry, rate, isHost, markOut, startCashout }) {
   const { L, M } = useL();
   const myIn = viewer.entries.reduce((a, e) => a + e.amount, 0);
   return (
@@ -27,14 +27,14 @@ export default function Live({ cfg, players, viewer, recordEntry, rate, isHost, 
       </div>
       <div className="grid grid-cols-2 gap-2">
         <Btn tone="ghost" full disabled={viewer.entries.length >= cfg.maxRebuys + 1} onClick={() => recordEntry(viewer.id, cfg.buyIn, "re-buy")}><Plus size={14} className="inline -mt-0.5 mr-1" /> {L.rebuy}</Btn>
-        <Btn tone="ghost" full onClick={() => { upd(viewer.id, { out: true }); mkLog(L.cashingEarly(viewer.name)); }}><LogOut size={14} className="inline -mt-0.5 mr-1" /> {L.cashEarly}</Btn>
+        <Btn tone="ghost" full disabled={viewer.out} onClick={markOut}><LogOut size={14} className="inline -mt-0.5 mr-1" /> {L.cashEarly}</Btn>
       </div>
       <div className="p-4 rounded-2xl" style={{ background: C.room, border: `1px solid ${C.line}` }}>
         <Eyebrow>{L.exposure(viewer.name)}</Eyebrow>
         <div className="disp mt-1" style={{ fontSize: 24, fontWeight: 800 }}>{M(myIn, cfg.cur)}</div>
         <div className="mono mt-1" style={{ fontSize: 10.5, color: C.mute }}>{L.exposureNoteReceipt}</div>
       </div>
-      {isHost ? <Btn full onClick={() => setGp("cashout")}>{L.lastHand}</Btn> : <div className="mono text-center" style={{ fontSize: 11, color: C.mute }}>{L.bankerOnly}</div>}
+      {isHost ? <Btn full onClick={startCashout}>{L.lastHand}</Btn> : <div className="mono text-center" style={{ fontSize: 11, color: C.mute }}>{L.bankerOnly}</div>}
     </div>
   );
 }
