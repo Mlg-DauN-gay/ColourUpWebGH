@@ -4,7 +4,7 @@ import { C } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
 import { Btn, Dot, Eyebrow, Row } from "./atoms";
 
-export default function Settle({ cfg, nets, transfers, players, viewer, upd, allApproved, release }) {
+export default function Settle({ cfg, nets, transfers, players, viewer, isHost, approve, allApproved, release }) {
   const { L, M } = useL();
   const sorted = [...nets].sort((a, b) => b.net - a.net);
   const naive = players.length * (players.length - 1) / 2;
@@ -45,8 +45,10 @@ export default function Settle({ cfg, nets, transfers, players, viewer, upd, all
         ))}
       </div>
       {!viewer.approved
-        ? <Btn full onClick={() => upd(viewer.id, { approved: true })}><ShieldCheck size={15} className="inline -mt-0.5 mr-1.5" /> {L.thisRight(viewer.name)}</Btn>
-        : <Btn full disabled={!allApproved} onClick={release}>{allApproved ? L.finaliseReceipt : L.waitingSigs(players.filter(p => !p.approved).length)}</Btn>}
+        ? <Btn full onClick={approve}><ShieldCheck size={15} className="inline -mt-0.5 mr-1.5" /> {L.thisRight(viewer.name)}</Btn>
+        : isHost
+          ? <Btn full disabled={!allApproved} onClick={release}>{allApproved ? L.finaliseReceipt : L.waitingSigs(players.filter(p => !p.approved).length)}</Btn>
+          : <div className="mono text-center" style={{ fontSize: 11, color: C.mute }}>{allApproved ? L.waitingForHost : L.waitingSigs(players.filter(p => !p.approved).length)}</div>}
     </div>
   );
 }

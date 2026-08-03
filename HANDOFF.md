@@ -406,20 +406,133 @@ the rest triaged into "What's next" below:
    generically. Verified live: hosted a table, hard-refreshed, landed
    back in the same lobby instead of Home.
 
+## Milestone 2 slice 2 + Milestone 3 — Cashout through Done, with real count privacy (done this session)
+
+The other big local-only gap flagged after the Fund fix — Cashout,
+Reconcile, Settle, and Done ran on 100% per-device React state, same
+deadlock shape Fund had (a submitted count, a sign-off, or a finished game
+on one phone was invisible to every other phone). This closes it, plus
+builds the integrity model the original spec's Milestone 3 calls
+security-critical: a player's chip count is readable by them always, but
+by no one else until every seat has locked a count and the game reaches
+settle/done.
+
+**Schema** (`supabase/migrations/0008_sync_cashout_through_done.sql`):
+- `game_players` gains `out`/`submitted`/`approved` (the original spec's
+  schema always listed these; only `agreed` had actually been built).
+  Plain self-reported booleans, publicly visible — not the sensitive part.
+- New `player_counts` table (`game_id`, `game_player_id`, `chips`) is the
+  sensitive part: SELECT policy is "your own row always; anyone else's
+  only once `games.phase` is `settle`/`done`"; INSERT-only, no UPDATE
+  policy at all — that's what makes "no one, including the host, can edit
+  a single player's number to force a balance" a real DB guarantee, not
+  just a UI convention. A recount deletes and re-inserts, it never edits.
+- `reconcile_totals(game_id)`: SECURITY DEFINER RPC returning only
+  `{counted, issued}` aggregates — lets any participant check balance
+  during cashout/reconcile without ever exposing a per-player figure.
+- `recount_lock(game_id)`: host-only SECURITY DEFINER RPC, all-or-nothing
+  — resets every `submitted` flag, deletes every count, drops the game
+  back to `cashout`. Only callable from `reconcile`.
+- `advance_phase()` extended with `live→cashout`, `cashout→reconcile`
+  (gated on everyone submitted), `reconcile→settle` (gated on the
+  aggregate actually balancing), `settle→done` (gated on everyone
+  approved) — same host-only, friendly-error-in-front-of-RLS shape as
+  `fund→live` already had.
+
+**Client** (`lib/useGameData.js`, `app/page.jsx`, and
+`components/{Live,Cashout,Reconcile,Settle}.jsx`): same sync pattern Fund
+established — local `players[]` stays mirrored from the real tables via
+an effect, each phase transition is a host-only action with a
+Realtime-driven pickup effect for everyone else. `Reconcile.jsx` needed
+an actual behavior change, not just rewiring: it used to list every
+player's raw chip count, which would now leak exactly what the RLS above
+exists to hide — it shows the aggregate (from `reconcile_totals()`) and a
+"counted" tag for other seats, revealing figures only once the game
+actually reaches `settle`. History-saving moved out of the host-only
+`release()` into a per-device effect keyed on `gp === "done"`, since
+every player needs their own net saved to their own history, not just
+whichever device happened to click finalize.
+
+**A real regression, found and fixed while verifying this**
+(`0009_fix_join_regression.sql`): tightening `games`' SELECT policy for
+the enumeration-leak fix (see above) broke `game_players`' own INSERT
+policy — its own internal check queries `games` via a raw subquery, which
+is itself subject to that now-tightened policy, and a first-time joiner
+is by definition not yet seated and not host, so the check failed for
+every real join. This is exactly the SECURITY DEFINER-bypass pattern used
+everywhere else in this file; it was missed for this one call site
+because the original enumeration fix was verified read-side only (could
+a stranger list games?) and never re-ran the actual join flow afterward.
+**Lesson for next time: after any RLS policy change, re-run the full
+join-a-table flow end-to-end, not just the specific query the change was
+about** — a tightened SELECT policy can silently break an unrelated
+INSERT/UPDATE policy that queries the same table internally.
+
+**Verified two ways**, not just by reading the diff:
+1. Directly against the live database with two independent real sessions
+   (host + a fresh anonymous session) scripted through the full
+   lobby→fund→live→cashout→reconcile→settle→done lifecycle via curl,
+   confirming at each step: a non-owner's `player_counts` read returns
+   empty during cashout/reconcile and both rows once settle starts; a
+   genuine mismatch blocks `reconcile→settle`; a non-host's `recount_lock`
+   call is rejected; the host's succeeds and correctly resets
+   submitted/counts and drops the phase back to `cashout`.
+2. The identical flow driven through the real browser UI (host) with a
+   curl-simulated guest, confirming the screens themselves respect the
+   same privacy boundary — the guest's roster row shows "COUNTED" with no
+   number during cashout/reconcile, the real figure only appearing once
+   Settle renders — and that the aggregate "counted / issued" bar on
+   `PotRail` (also re-sourced from `reconcile_totals()`, since it has the
+   same leak risk the Reconcile screen had) updates live and correctly
+   through every phase, ending on a correctly-populated final receipt.
+
+**Deliberately not done this pass**: `ledger` (the append-only game-event
+log table from 0002) still has zero callers — Lobby/Fund/Live events stay
+in each device's local, single-device-visible `log` only. `transfers`
+from the original spec's schema was skipped entirely: once `settle`
+widens `player_counts` visibility to everyone, every device can
+deterministically recompute the same `nets`/`transfers` client-side from
+`entries` + `player_counts` (the existing `simplify()` function, unchanged),
+so persisting a separate table added no correctness benefit for this pass.
+
 ## What's next
 
 The user gave a **7-milestone roadmap** (verbatim, appended below) for
 turning this from a single-device simulation into a real multiplayer app.
-**Milestone 1 is done but was substantially reworked from that spec**, and
-**Milestone 2 is now underway but only its first slice is done** (real
-lobby only — see above). The natural next slice is rewiring Fund → Live →
-Cashout → Reconcile → Settle → Done onto the same real
-`entries`/`ledger` tables and Realtime pattern established for the lobby,
-plus the `player_counts`/`transfers` tables and the count-privacy +
-recount-lock RPCs from the original Milestone 3 spec — deliberately not
-built yet since their shape depends on that Cashout/Reconcile design.
-Prioritise correctness of that integrity model over speed once you get
-there, per the original spec's own instruction.
+**Milestone 1 is done but was substantially reworked from that spec**,
+and **Milestone 2 and the core of Milestone 3 are now done** — every game
+phase (lobby through done) runs on real, Realtime-synced Supabase state
+with the count-privacy and recount-lock guarantees Milestone 3 calls
+security-critical (see the section above). The whole
+lobby→fund→live→cashout→reconcile→settle→done lifecycle has been verified
+end-to-end, both via direct database calls with two independent real
+sessions and by driving the actual browser UI.
+
+What's genuinely left from the original spec, roughly in priority order:
+- **The `ledger` table has zero callers.** Every phase's event log
+  (`mkLog`) is still purely local, single-device-visible. Wiring it up is
+  low-risk (append-only, RLS already correct from 0002) but real work —
+  every `mkLog(...)` call site across `app/page.jsx` would need an
+  accompanying `ledger` insert, and the Ledger panel UI would need to read
+  from the real table instead of local `log` state.
+- **M6 items**: exact-cent money math (settlement currently uses plain
+  floats with epsilon thresholds, not integer minor units +
+  largest-remainder distribution), reconnect/offline handling for a
+  dropped Realtime channel, the reconciliation escape hatch after repeated
+  failed recounts, host rake/tip, mid-game buy-ins.
+- **M7 items**: onboarding cards, an accessibility pass (most icon-only
+  buttons still have no `aria-label`), a privacy page, data export/delete.
+- **PWA/installable + offline** — no manifest or service worker exist yet.
+
+Before extending further: confirm scope with the user rather than
+assuming, especially anywhere the original spec's assumptions (solo mode,
+always-visible nav chrome) might resurface. The user iterates fast and
+corrects architecture choices directly — expect to adjust mid-flight
+rather than plan everything upfront. Also worth internalizing the lesson
+from this session's regression (see above): **after any RLS policy
+change, re-verify the full flow it sits inside, not just the specific
+scenario the change targeted** — tightening one policy can silently break
+a different policy that queries the same table internally.
 
 Before extending further: confirm scope with the user rather than
 assuming, especially anywhere the original spec's assumptions (solo mode,
