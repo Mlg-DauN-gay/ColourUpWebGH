@@ -57,7 +57,7 @@ function AccountSection({ userEmail, signOut, updatePassword }) {
 }
 
 export default function ProfileTab({
-  session, dataReady, signUp, signIn, requestPasswordReset,
+  session, dataReady, signUp, signIn, signInWithGoogle, requestPasswordReset,
   profile, setProfile, history, userEmail, signOut, updatePassword,
   friends, setFriends, mkLog, gameLive, addSeatNamed,
   onBack,
@@ -66,6 +66,7 @@ export default function ProfileTab({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(profile);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const stats = useMemo(() => {
     const games = history.length;
@@ -77,9 +78,10 @@ export default function ProfileTab({
   }, [history, profile.currency]);
 
   async function handleSave() {
-    setSaving(true);
-    await setProfile({ ...draft, registered: true });
+    setSaving(true); setSaveError("");
+    const { error } = await setProfile({ ...draft, registered: true });
     setSaving(false);
+    if (error) { setSaveError(L.saveProfileError); return; }
     setEditing(false);
   }
 
@@ -87,7 +89,7 @@ export default function ProfileTab({
     return (
       <div className="space-y-6">
         <BackBar onBack={onBack} />
-        <AuthGate {...{ signUp, signIn, requestPasswordReset }} />
+        <AuthGate {...{ signUp, signIn, signInWithGoogle, requestPasswordReset }} />
       </div>
     );
   }
@@ -120,6 +122,7 @@ export default function ProfileTab({
           <Eyebrow>{L.homeCur}</Eyebrow>
           <div className="flex gap-2 mt-2">{CURRENCIES.map(cu => <button key={cu} onClick={() => setDraft({ ...draft, currency: cu })} className="rounded-lg mono" style={{ width: 44, height: 40, fontSize: 16, fontWeight: 600, background: draft.currency === cu ? C.brass : C.room, color: draft.currency === cu ? C.onAccent : C.ivory, border: `1px solid ${draft.currency === cu ? C.brass : C.line}` }}>{cu}</button>)}</div>
         </div>
+        {saveError && <div className="flex items-start gap-1.5" style={{ fontSize: 12, color: C.lose, lineHeight: 1.4 }}><AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> {saveError}</div>}
         <div className="flex gap-2">
           {profile.registered && <Btn tone="ghost" onClick={() => { setDraft(profile); setEditing(false); }}>{L.cancel}</Btn>}
           <div className="flex-1"><Btn full disabled={!draft.name.trim() || draft.handle.length < 2 || saving} onClick={handleSave}>{L.saveProfile}</Btn></div>

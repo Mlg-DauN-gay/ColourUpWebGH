@@ -36,7 +36,7 @@ export default function ColourUpPage() {
   // always live in Supabase once signed in (lib/useAppData.js).
   const {
     session, authReady, dataReady, userEmail,
-    signUp, signIn, requestPasswordReset, updatePassword, signOut,
+    signUp, signIn, signInWithGoogle, requestPasswordReset, updatePassword, signOut,
     profile, setProfile, friends, setFriends, history, setHistory,
   } = useAppData();
 
@@ -216,7 +216,7 @@ export default function ColourUpPage() {
               {gp === "done" && <Done {...{ cfg, nets, transfers, elapsed, backHome, players }} />}
             </>) : (
               <ProfileTab key={dataReady ? "ready" : "loading"} {...{
-                session, dataReady, signUp, signIn, requestPasswordReset,
+                session, dataReady, signUp, signIn, signInWithGoogle, requestPasswordReset,
                 profile, setProfile, history, userEmail, signOut, updatePassword,
                 friends, setFriends, mkLog, gameLive, addSeatNamed,
                 onBack: () => { setPendingLobby(false); setTab("play"); },
