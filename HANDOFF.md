@@ -26,13 +26,15 @@ milestone too.
   `HEAD..origin/main` before assuming you're current. Consider deleting one
   clone to remove the risk entirely, but that's a call for the human, not an
   agent, to make.
-- **Redesign in progress, NOT yet on `main`**: branch `redesign/identity`
-  (pushed to origin) has a full visual-identity redesign — see `DESIGN.md`
-  for the plan, and the "Session: 2026-08-04 identity redesign" section
-  right below for what changed. A safety tag `backup/pre-redesign-2026-08-04`
-  marks the commit `main` was at before this branch started. **Do not merge
-  `redesign/identity` into `main` without the user's explicit go-ahead** —
-  they asked to review it themselves first.
+- **Redesign shipped, on `main`**: the full visual-identity redesign built
+  overnight on `redesign/identity` was reviewed by the user the next
+  morning, refined once more (Home hero/actions, per direct feedback — see
+  below), approved, and fast-forward merged into `main` — see `DESIGN.md`
+  for the plan and the "Session: 2026-08-04 identity redesign" section right
+  below for what changed. `redesign/identity` and the safety tag
+  `backup/pre-redesign-2026-08-04` (the commit `main` was at before the
+  redesign started) are both still on origin if a rollback reference is
+  ever needed, but `main` is now the current, real version.
 
 ## Session: 2026-08-04 identity redesign
 
@@ -83,6 +85,18 @@ merged — see above). Full brief and plan in `DESIGN.md`. Summary:
   one theme was in scope, a switcher was explicitly rejected earlier in the
   project); no sound/haptics; no receipt image export. See `DESIGN.md`'s
   "What's deliberately left out" for the full list.
+- **Follow-up round, same morning, from direct user feedback on Home**:
+  the initial Home pass still read as a utility menu. Rebuilt around a hero
+  panel (brand chip mark under a warm radial glow — the "lamplight" layout
+  concept, actually used for the first time — plus `homeSub` rewritten to
+  state the app's whole promise plainly instead of a generic subtitle),
+  collapsed the Host/Join cards from full-height billboards into a compact
+  two-up row (Host filled/primary, Join outlined/secondary), then on a
+  second pass dropped their subtitle copy entirely (kept as `aria-label`,
+  not shown) and went icon-forward — bigger Plus/QrCode glyphs, title
+  centered below — and turned "How this works" from an 11px text link into
+  an actual filled pill button with an icon, since it was easy to miss.
+  User approved and this was merged straight to `main`.
 - **Stack**: Next.js 16 (App Router, JS/JSX — not TypeScript), Tailwind CSS, lucide-react, Supabase (Postgres + Auth)
 - **Deployed**: https://colour-up-web-gh.vercel.app (Vercel, Hobby/free tier,
   auto-deploys from `main`). See "Deployment" section below for what's
