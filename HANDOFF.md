@@ -12,14 +12,77 @@ transfers needed to square everyone up. It never charges cards, holds funds,
 or moves money. That constraint is non-negotiable and applies to every future
 milestone too.
 
-- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH — **working copy is
-  `~/ColourUpWebGH`, on `main`** (both M2 PRs are merged; the old
-  `claude/launch-app-yb9vqz` branch has served its purpose and can be
-  deleted). A second, older, orphaned clone still exists at
-  `~/Desktop/ColourUp website` (stale, missing everything past M1) — that
-  directory caused real confusion in one earlier session. **Don't use the
-  Desktop copy** — either delete it or treat `~/ColourUpWebGH` as the only
-  real one.
+- **Repo**: https://github.com/Mlg-DauN-gay/ColourUpWebGH. **Two local clones
+  exist on this machine** — `~/ColourUpWebGH` and `~/Desktop/ColourUp
+  website` — both pointing at the same GitHub remote. An earlier handoff
+  called the Desktop copy "stale/orphaned" and said not to use it; that was
+  true at the time but is **no longer accurate** — as of the 2026-08-04
+  identity-redesign session, the Desktop copy was fetched, merged with
+  `origin/main` (bringing in both M2 PRs), and used to push commits
+  (Google sign-in, the M2 merge) straight to `main`. **Both clones can now
+  drift out of sync with each other again** if worked in separately without
+  pushing/pulling — that's the actual risk, not "one of them is fake."
+  Whichever one you're in, `git fetch && git log origin/main..HEAD` /
+  `HEAD..origin/main` before assuming you're current. Consider deleting one
+  clone to remove the risk entirely, but that's a call for the human, not an
+  agent, to make.
+- **Redesign in progress, NOT yet on `main`**: branch `redesign/identity`
+  (pushed to origin) has a full visual-identity redesign — see `DESIGN.md`
+  for the plan, and the "Session: 2026-08-04 identity redesign" section
+  right below for what changed. A safety tag `backup/pre-redesign-2026-08-04`
+  marks the commit `main` was at before this branch started. **Do not merge
+  `redesign/identity` into `main` without the user's explicit go-ahead** —
+  they asked to review it themselves first.
+
+## Session: 2026-08-04 identity redesign
+
+Done overnight while the user slept, on branch `redesign/identity` (not
+merged — see above). Full brief and plan in `DESIGN.md`. Summary:
+
+- New warm/dark "lamplit kitchen-table" palette replacing the previous cool
+  light/blue theme, in `lib/themes.js` — same `C.*`/`THEME` token names, new
+  values, so most components needed zero changes. One real bug caught and
+  fixed mid-flight: the rewrite initially dropped the `sheet` token that
+  `JoinSheet.jsx`/`ChipScanner.jsx` depend on — re-added.
+- Display font swapped `Bricolage_Grotesque` → `Unbounded` in
+  `app/layout.jsx`, and **added the `cyrillic` subset to all three fonts**
+  (display/body/mono) — they were `latin`-only before, meaning Russian text
+  was silently falling back to a system font this whole time. Verified
+  Cyrillic renders correctly in the display face post-fix.
+- Signature element: money figures get a tabular "chip-edge" treatment
+  (dashed underline echoing the poker-chip mark's milled edge); `Done.jsx`
+  gets a "colour up" motion where player positions visually merge into the
+  receipt's minimized transfers — respects `prefers-reduced-motion` via the
+  existing blanket CSS rule (confirmed this correctly beats inline
+  `style={{animation}}` per CSS `!important` cascade rules, not a bug).
+- New `components/StepRail.jsx`: the real 7-phase sequence
+  (setup→lobby→fund→live→cashout→reconcile→settle), always visible, wired
+  into `app/page.jsx` above every in-game screen.
+- New `components/Intro.jsx`: skippable first-run explainer + the
+  receipt-only promise, reachable again via a "How this works" link on Home.
+- One-tap re-host of the last table (`lastHostedCfg`/`localStorage` in
+  `app/page.jsx`, surfaced in `PlayHome.jsx`).
+- `app/auth/reset/page.jsx` was hardcoding its own separate (stale, blue)
+  palette instead of importing the shared theme — normalized onto
+  `lib/themes.js`. Note: this page and `app/join/[code]/JoinClient.jsx` both
+  hardcode **English-only UI text** (pre-existing, not introduced tonight) —
+  a real gap against the "no hardcoded strings" bilingual invariant, flagged
+  but not fixed this session; needs its own pass to wire a lang source into
+  standalone routes outside `app/page.jsx`'s shell.
+- Verified visually (browser, mobile viewport, both EN/RU): Home, Setup, the
+  first-run Intro sheet, Create-profile. Verified by source review only
+  (all consume `C.*` tokens, no hardcoded legacy colours found, clean
+  `npm run lint` / `npm run build`): Lobby, Fund, Live, Cashout, Reconcile,
+  Settle, Done, AuthGate, FriendsTab, ChipScanner, JoinSheet. Didn't get a
+  live multiplayer screenshot of Lobby — the test browser's Supabase session
+  had gone stale (expired JWT, `getSession()` optimistically stale while
+  `getUser()` correctly rejected it) after many hours in one session; that's
+  a test-environment artifact, not a code regression, but worth a fresh
+  eyeball.
+- What's deliberately not done: no second theme/light mode (redesigning the
+  one theme was in scope, a switcher was explicitly rejected earlier in the
+  project); no sound/haptics; no receipt image export. See `DESIGN.md`'s
+  "What's deliberately left out" for the full list.
 - **Stack**: Next.js 16 (App Router, JS/JSX — not TypeScript), Tailwind CSS, lucide-react, Supabase (Postgres + Auth)
 - **Deployed**: https://colour-up-web-gh.vercel.app (Vercel, Hobby/free tier,
   auto-deploys from `main`). See "Deployment" section below for what's

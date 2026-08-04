@@ -4,6 +4,12 @@ Mobile-first web app for running and settling home poker cash games. Its only
 financial output is a **settlement receipt** — the fewest transfers needed to
 square everyone up. It never charges cards, holds funds, or moves money.
 
+## Design
+
+One fixed identity — warm, dark, lamplit; a kitchen-table game at night, not
+a casino floor or a fintech dashboard. See [`DESIGN.md`](DESIGN.md) for the
+full colour/type/layout plan and the "chip-edge" signature numeral treatment.
+
 ## Getting started
 
 ```bash
@@ -76,10 +82,11 @@ app/
   auth/callback/route.js exchanges a Supabase email-confirm/reset code for a session
   auth/reset/page.jsx    "set a new password" form, landed on after a reset-link click
 components/              Setup, Lobby, Fund, Live, Cashout, Reconcile, Settle,
-                         Done, PlayHome, ProfileTab (profile + friends + account), AuthGate, ChipScanner, …
+                         Done, PlayHome, ProfileTab (profile + friends + account), AuthGate, ChipScanner,
+                         StepRail (always-visible 7-phase progress track), Intro (skippable first-run explainer), …
 lib/
   i18n.js                EN/RU dictionary + money()/locale helpers
-  themes.js               the single Trust palette as CSS custom properties
+  themes.js               the single palette (see DESIGN.md) as CSS custom properties
   settle.js               minimal-transfer settlement algorithm
   chips.js                denomination ladder, assignDenoms, computeStacks
   useAppData.js           auth session + profile/friends/history, all Supabase-backed
