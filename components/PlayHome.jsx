@@ -1,5 +1,5 @@
 "use client";
-import { ChevronRight, Plus, QrCode, Spade } from "lucide-react";
+import { ChevronRight, Info, Plus, QrCode, Spade } from "lucide-react";
 import { C } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
 import { Chip, Eyebrow } from "./atoms";
@@ -17,7 +17,12 @@ export default function PlayHome({ profile, history, resumeGp, resumeTable, star
         <div className="flex justify-center mb-3"><Chip size={34} color={C.gold} /></div>
         <div className="disp" style={{ fontSize: 25, fontWeight: 800, letterSpacing: "-.03em", lineHeight: 1.1 }}>{L.homeHi(profile.name)}</div>
         <p className="mx-auto mt-2.5" style={{ fontSize: 13, color: C.sub, lineHeight: 1.55, maxWidth: 300 }}>{L.homeSub}</p>
-        {openIntro && <button onClick={openIntro} className="mono mt-3" style={{ fontSize: 11, color: C.brass }}>{L.introReopen}</button>}
+        {openIntro && (
+          <button onClick={openIntro} className="inline-flex items-center gap-1.5 mt-4 px-4 py-2 rounded-full" style={{ background: C.brass, color: C.onAccent }}>
+            <Info size={14} />
+            <span style={{ fontSize: 13, fontWeight: 700 }}>{L.introReopen}</span>
+          </button>
+        )}
       </div>
 
       {resumeGp && (
@@ -32,15 +37,13 @@ export default function PlayHome({ profile, history, resumeGp, resumeTable, star
           like actions, not billboards. Host leads (filled) since it's the
           more common entry point; Join is the secondary, quieter twin. */}
       <div className="grid grid-cols-2 gap-3">
-        <button onClick={startHost} className="text-left p-4 rounded-2xl" style={{ background: C.brass, color: C.onAccent }}>
-          <Plus size={17} />
-          <div className="disp mt-2.5" style={{ fontSize: 14.5, fontWeight: 800, letterSpacing: "-.01em" }}>{L.hostGame}</div>
-          <div style={{ fontSize: 11, marginTop: 1, opacity: 0.75 }}>{L.hostGameSub}</div>
+        <button onClick={startHost} aria-label={L.hostGameSub} className="flex flex-col items-center justify-center gap-2.5 py-6 rounded-2xl" style={{ background: C.brass, color: C.onAccent }}>
+          <Plus size={30} />
+          <div className="disp" style={{ fontSize: 15.5, fontWeight: 800, letterSpacing: "-.01em" }}>{L.hostGame}</div>
         </button>
-        <button onClick={() => setJoinSheet(true)} className="text-left p-4 rounded-2xl" style={{ background: C.room, border: `1px solid ${C.line}` }}>
-          <QrCode size={17} style={{ color: C.brass }} />
-          <div className="disp mt-2.5" style={{ fontSize: 14.5, fontWeight: 800, letterSpacing: "-.01em" }}>{L.joinGame}</div>
-          <div style={{ fontSize: 11, marginTop: 1, color: C.mute }}>{L.joinGameSub}</div>
+        <button onClick={() => setJoinSheet(true)} aria-label={L.joinGameSub} className="flex flex-col items-center justify-center gap-2.5 py-6 rounded-2xl" style={{ background: C.room, border: `1px solid ${C.line}` }}>
+          <QrCode size={30} style={{ color: C.brass }} />
+          <div className="disp" style={{ fontSize: 15.5, fontWeight: 800, letterSpacing: "-.01em" }}>{L.joinGame}</div>
         </button>
       </div>
 
