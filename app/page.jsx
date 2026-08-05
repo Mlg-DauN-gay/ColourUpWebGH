@@ -50,7 +50,8 @@ function ColourUpApp() {
   // always live in Supabase once signed in (lib/useAppData.js).
   const {
     session, authReady, dataReady, userEmail,
-    signUp, signIn, signInWithGoogle, requestPasswordReset, updatePassword, signOut, upgradeAnonymousAccount,
+    signUp, signIn, signInWithGoogle, requestPasswordReset, updatePassword, signOut,
+    upgradeAnonymousAccount, linkGoogleIdentity,
     profile, setProfile, friends, setFriends, history, setHistory,
   } = useAppData();
 
@@ -518,7 +519,7 @@ function ColourUpApp() {
                   onStart: startFunding, mkLog, lobbyCode: gameData.game?.code || "",
                 }} />
               ))}
-              {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount }} />}
+              {gp === "fund" && <Fund {...{ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount, linkGoogleIdentity }} />}
               {gp === "live" && <Live {...{ cfg, players, viewer, recordEntry, rate, isHost, markOut, startCashout }} />}
               {gp === "cashout" && <Cashout key={viewer.id} {...{ cfg, players, viewer, isHost, rate, allSubmitted, lockStack, startReconcile }} />}
               {gp === "reconcile" && <Reconcile {...{ players, viewer, isHost, totals, startSettle, recount }} />}

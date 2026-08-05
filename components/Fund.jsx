@@ -3,13 +3,14 @@ import { useState } from "react";
 import { AlertTriangle, Check, Wallet } from "lucide-react";
 import { C } from "@/lib/themes";
 import { useL } from "@/lib/LangContext";
-import { Btn, Dot, Eyebrow, Field, Row } from "./atoms";
+import { Btn, Dot, Eyebrow, Field, GoogleButton, Row } from "./atoms";
 
-function AnonymousUpgradeGate({ upgradeAnonymousAccount }) {
+function AnonymousUpgradeGate({ upgradeAnonymousAccount, linkGoogleIdentity }) {
   const { L } = useL();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -20,6 +21,15 @@ function AnonymousUpgradeGate({ upgradeAnonymousAccount }) {
     setBusy(false);
     if (error) { setError(error.message); return; }
     if (!data?.session) setNotice(L.confirmEmailSent);
+  }
+
+  async function handleGoogle() {
+    setError(""); setNotice(""); setGoogleBusy(true);
+    // Success redirects the browser to Google (and back to this same game
+    // via the `next` param baked into linkGoogleIdentity) — only failures
+    // return control here.
+    const { error } = await linkGoogleIdentity();
+    if (error) { setError(error.message); setGoogleBusy(false); }
   }
 
   return (
@@ -33,23 +43,35 @@ function AnonymousUpgradeGate({ upgradeAnonymousAccount }) {
           <span style={{ fontSize: 13, lineHeight: 1.5 }}>{notice}</span>
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <Field label={L.emailLabel} type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} />
-          <Field label={L.passwordLabel} type="password" autoComplete="new-password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} />
-          {error && <div className="flex items-start gap-1.5" style={{ fontSize: 12, color: C.lose, lineHeight: 1.4 }}><AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> {error}</div>}
-          <Btn full disabled={busy || !email.trim() || password.length < 6} onClick={handleSubmit}>{L.signUpBtn}</Btn>
-        </form>
+        <>
+          {linkGoogleIdentity && (
+            <>
+              <GoogleButton onClick={handleGoogle} disabled={googleBusy} label={L.continueWithGoogle} />
+              <div className="flex items-center gap-3" style={{ color: C.mute }}>
+                <div className="flex-1" style={{ height: 1, background: C.line }} />
+                <span style={{ fontSize: 11.5, textTransform: "uppercase", letterSpacing: ".08em" }}>{L.orDivider}</span>
+                <div className="flex-1" style={{ height: 1, background: C.line }} />
+              </div>
+            </>
+          )}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <Field label={L.emailLabel} type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} />
+            <Field label={L.passwordLabel} type="password" autoComplete="new-password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} />
+            {error && <div className="flex items-start gap-1.5" style={{ fontSize: 12, color: C.lose, lineHeight: 1.4 }}><AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> {error}</div>}
+            <Btn full disabled={busy || !email.trim() || password.length < 6} onClick={handleSubmit}>{L.signUpBtn}</Btn>
+          </form>
+        </>
       )}
     </div>
   );
 }
 
-export default function Fund({ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount }) {
+export default function Fund({ cfg, players, viewer, recordEntry, allFunded, isHost, startLive, session, upgradeAnonymousAccount, linkGoogleIdentity }) {
   const { L, M } = useL();
   const paid = viewer.entries.length > 0;
 
   if (session?.user?.is_anonymous) {
-    return <AnonymousUpgradeGate upgradeAnonymousAccount={upgradeAnonymousAccount} />;
+    return <AnonymousUpgradeGate upgradeAnonymousAccount={upgradeAnonymousAccount} linkGoogleIdentity={linkGoogleIdentity} />;
   }
 
   return (
