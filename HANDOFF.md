@@ -574,6 +574,72 @@ deterministically recompute the same `nets`/`transfers` client-side from
 `entries` + `player_counts` (the existing `simplify()` function, unchanged),
 so persisting a separate table added no correctness benefit for this pass.
 
+## Session: 2026-08-04, later — exact-cent settlement + reconnect handling
+
+Both flagged by the user as "the top real risk if you're actually going to
+use this at a live game," fixed together same session.
+
+**Exact-cent money (`lib/money.js`, new).** The old `nets` computation did
+`chips / rate` where `rate = cfg.chips / cfg.buyIn` — a float division that
+could leave the receipt a fraction of a cent short of zero, papered over by
+`simplify()`'s `< 0.005` epsilon thresholds (a symptom, not a fix). Now:
+every buy-in converts to integer minor units (`toMinor`), the total pot is
+apportioned across final chip counts by **largest-remainder (Hamilton)
+apportionment** — `distributeLargestRemainder()` — instead of dividing each
+player independently, and `simplify()` runs on those exact integers with
+plain `=== 0` comparisons. Nets are now guaranteed to sum to precisely zero
+by construction, not by epsilon luck. `rate` is untouched and still used
+for in-game *previews* (Cashout's running total while typing, Live's
+exposure card) — approximate is fine there; this exact path is only for
+`app/page.jsx`'s `nets`/`transfers`, the numbers that actually end up on
+the receipt. **Verified with node, not just by reading the diff**: ran
+`distributeLargestRemainder` against weights that don't divide evenly
+(confirmed shares still sum exactly to the total), the classic `10.10 ×
+3` float-trap amount (confirmed `toMinor` avoids it), and a full 4-player
+scenario through both functions end-to-end (confirmed nets sum to exactly
+zero, break-even players are correctly excluded from transfers, minimal
+transfer count preserved).
+
+**Reconnect/offline resync (`lib/useGameData.js`).** There was no resync
+logic at all — a dropped Realtime channel (wifi loss, a backgrounded phone
+suspending its socket) just silently went stale forever with nothing to
+catch back up. Now: the initial fetch logic was extracted into `refetchAll()`
+(returns whether it actually succeeded, since Supabase-js resolves with an
+`error` field rather than throwing on a network failure — callers need
+real success, not just "we tried"); the Realtime channel's own
+`.subscribe((status) => …)` callback tracks `CLOSED`/`CHANNEL_ERROR`/
+`TIMED_OUT` as `connectionStatus = 'reconnecting'`, and a genuine
+reconnect (`SUBSCRIBED` after having been subscribed before, tracked via
+an `everSubscribed` flag so the *first* subscribe isn't treated as a
+reconnect) triggers a full `refetchAll` to catch up on anything missed
+while down — Realtime only pushes events for changes that happened while
+actually connected. `window` `online`/`offline` and `document`
+`visibilitychange` listeners cover the same thing from a different angle
+(a suspended mobile socket may not report `CLOSED` promptly; `online` can
+fire before Supabase's own reconnect logic notices). `app/page.jsx` shows
+a "Reconnecting — catching up…" banner (new `L.reconnecting`, both
+locales) above the step rail whenever `connectionStatus === 'reconnecting'`
+during any live game phase.
+
+**A real bug caught by testing this myself, not just reading the diff**:
+the first version cleared "reconnecting" only from the channel's own
+`SUBSCRIBED` callback. Simulated `window.dispatchEvent(new
+Event('offline'))` then `'online'` in the browser (the real WebSocket was
+never actually dropped, so the channel had nothing to resubscribe to) —
+the banner correctly appeared on the fake `offline`, then **stayed stuck
+forever** on the fake `online`, because `onOnline`/`onVisibility` only
+called `refetchAll()` without ever clearing the status themselves. Fixed
+by giving both the channel-status handler and the online/visibility
+listeners a single shared `resync()` that only sets `connectionStatus =
+'connected'` once `refetchAll()` actually returns success — re-tested the
+same offline→online sequence live in the browser afterward and confirmed
+the banner now clears correctly. **Not yet tested**: a genuine two-device
+network drop (killing real wifi mid-game) — everything above was verified
+either by direct unit-level testing (money math) or by simulating the
+browser-level signals in a single session (reconnect banner); the actual
+Realtime channel's own auto-reconnect behavior under a real network
+outage is Supabase's own client code and wasn't independently exercised.
+
 ## What's next
 
 The user gave a **7-milestone roadmap** (verbatim, appended below) for
@@ -594,13 +660,18 @@ What's genuinely left from the original spec, roughly in priority order:
   every `mkLog(...)` call site across `app/page.jsx` would need an
   accompanying `ledger` insert, and the Ledger panel UI would need to read
   from the real table instead of local `log` state.
-- **M6 items**: exact-cent money math (settlement currently uses plain
-  floats with epsilon thresholds, not integer minor units +
-  largest-remainder distribution), reconnect/offline handling for a
-  dropped Realtime channel, the reconciliation escape hatch after repeated
-  failed recounts, host rake/tip, mid-game buy-ins.
-- **M7 items**: onboarding cards, an accessibility pass (most icon-only
-  buttons still have no `aria-label`), a privacy page, data export/delete.
+- **M6 items**: exact-cent money math and reconnect/offline resync are
+  **done** as of the session above (`lib/money.js`, `lib/useGameData.js`'s
+  `refetchAll`/`connectionStatus`) — a real network-drop test with two
+  physical devices is still worth doing when possible, since everything so
+  far was verified via unit tests and simulated browser events, not an
+  actual killed connection. Still open: the reconciliation escape hatch
+  after repeated failed recounts, host rake/tip, mid-game buy-ins.
+- **M7 items**: onboarding cards (the redesign session's `Intro.jsx` covers
+  this now), an accessibility pass (much improved by the redesign — real
+  focus states, keyboard-operable rosters — but not exhaustive, some
+  icon-only buttons still have no `aria-label`), a privacy page,
+  data export/delete.
 - **PWA/installable + offline** — no manifest or service worker exist yet.
 
 Before extending further: confirm scope with the user rather than

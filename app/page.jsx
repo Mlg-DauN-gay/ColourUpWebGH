@@ -1,11 +1,12 @@
 "use client";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Clock, Languages, ScrollText, User } from "lucide-react";
+import { Clock, Languages, RefreshCw, ScrollText, User } from "lucide-react";
 import { C, PALETTE, THEME, themeVars } from "@/lib/themes";
 import { DICT, money } from "@/lib/i18n";
 import { Lang } from "@/lib/LangContext";
 import { simplify } from "@/lib/settle";
+import { distributeLargestRemainder, toMajor, toMinor } from "@/lib/money";
 import { useAppData } from "@/lib/useAppData";
 import { useGameData } from "@/lib/useGameData";
 import { Chip, Dot } from "@/components/atoms";
@@ -124,12 +125,30 @@ function ColourUpApp() {
     ? { title: gameData.game.title, cur: gameData.game.currency, buyIn: Number(gameData.game.buy_in), chips: Number(gameData.game.chips), maxRebuys: gameData.game.max_rebuys, scan: null }
     : cfg;
 
-  const nets = useMemo(() => players.map(p => {
-    const put = p.entries.reduce((a, e) => a + e.amount, 0);
-    const got = (p.chips ?? 0) / rate;
-    return { id: p.id, name: p.name, color: p.color, put, got, net: got - put };
-  }), [players, rate]);
-  const transfers = useMemo(() => simplify(nets), [nets]);
+  // Exact-cent settlement: the pot (total buy-ins, integer minor units) is
+  // divided across final chip counts by largest-remainder apportionment
+  // (lib/money.js) instead of each player's `chips / rate` — that float
+  // division is what could leave the receipt a fraction of a cent short of
+  // zero. `rate` stays in use for in-game *previews* (Cashout's running
+  // total while typing, Live's exposure card) where approximate is fine;
+  // this exact path is only for the money that ends up on the receipt.
+  const settlement = useMemo(() => {
+    const putMinor = players.map(p => p.entries.reduce((a, e) => a + toMinor(e.amount), 0));
+    const totalPotMinor = putMinor.reduce((a, b) => a + b, 0);
+    const gotMinor = distributeLargestRemainder(totalPotMinor, players.map(p => p.chips ?? 0));
+    const nets = players.map((p, i) => ({
+      id: p.id, name: p.name, color: p.color,
+      put: toMajor(putMinor[i]), got: toMajor(gotMinor[i]), net: toMajor(gotMinor[i] - putMinor[i]),
+    }));
+    // simplify() needs the exact integer minor-unit nets, not the display
+    // `nets` above — dividing by 100 for display is safe to re-round for
+    // showing on screen, but feeding /100'd floats back into the debt/
+    // credit matcher would reintroduce the exact error this is fixing.
+    const netsMinor = players.map((p, i) => ({ id: p.id, name: p.name, color: p.color, net: gotMinor[i] - putMinor[i] }));
+    const transfers = simplify(netsMinor).map(t => ({ from: t.from, to: t.to, amount: toMajor(t.amount) }));
+    return { nets, transfers };
+  }, [players]);
+  const { nets, transfers } = settlement;
 
   const hhmm = `${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor(elapsed / 60) % 60).padStart(2, "0")}`;
   const gameLive = ["lobby", "fund", "live", "cashout", "reconcile", "settle"].includes(gp);
@@ -504,6 +523,12 @@ function ColourUpApp() {
 
           <div className="px-5">
             {tab === "play" ? (<>
+              {gameLive && gameData.connectionStatus === "reconnecting" && (
+                <div className="mb-4 flex items-center gap-2 px-3.5 py-2.5 rounded-xl" style={{ background: C.raise, border: `1px solid ${C.brassSoft}` }} role="status">
+                  <span className="spin" style={{ color: C.brass }}><RefreshCw size={14} /></span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: C.brass }}>{L.reconnecting}</span>
+                </div>
+              )}
               <StepRail gp={gp} />
               {gp === "home" && <PlayHome {...{ profile, history, resumeGp, resumeTable, startHost, setJoinSheet, setTab, lastCfg, M, openIntro: () => setShowIntro(true) }} />}
               {gp === "setup" && <Setup {...{ cfg, setCfg, players, openLobby, mkLog }} />}
